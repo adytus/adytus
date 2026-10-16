@@ -3,21 +3,26 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/reaganiwadha/adytus/apps/api/internal/billing"
 	"github.com/reaganiwadha/adytus/apps/api/internal/crypto"
 	"github.com/reaganiwadha/adytus/apps/api/internal/errs"
+	"github.com/reaganiwadha/adytus/apps/api/internal/imageprep"
 	"github.com/reaganiwadha/adytus/apps/api/internal/llm"
+	"github.com/reaganiwadha/adytus/apps/api/internal/meter"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
 	"github.com/reaganiwadha/adytus/apps/api/internal/vault"
 )
@@ -30,8 +35,9 @@ type chatMeta struct {
 }
 
 type attachment struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Image bool      `json:"image,omitempty"`
 }
 
 type messageUsage struct {
@@ -277,7 +283,10 @@ func (s *Server) setChatOffline(c fiber.Ctx) error {
 
 // --- sending a message ---
 
-const maxAttachmentBytes = 200 * 1024
+const (
+	maxAttachmentBytes = 200 * 1024
+	maxImageBytes      = 20 << 20
+)
 
 type sendReq struct {
 	Content string      `json:"content" validate:"required,max=100000"`
@@ -292,27 +301,71 @@ func titleFrom(content string) string {
 	return t
 }
 
-// promptContent inlines attached text files into a message for the model.
-func (s *Server) promptContent(ctx context.Context, a *authCtx, b messageBody, cache map[uuid.UUID]string) string {
+// attachments loads attached files for the model once per request: text is
+// inlined, images are downscaled and re-encoded as JPEG (base64).
+type attachments struct {
+	s      *Server
+	ctx    context.Context
+	a      *authCtx
+	vision bool
+	text   map[uuid.UUID]string
+	images map[uuid.UUID]string
+}
+
+func (at *attachments) load(att attachment) {
+	if _, ok := at.text[att.ID]; ok {
+		return
+	}
+	if _, ok := at.images[att.ID]; ok {
+		return
+	}
+	_, data, err := at.s.readFile(at.ctx, at.a, att.ID)
+	switch {
+	case err != nil:
+		at.text[att.ID] = "[file no longer available]"
+	case att.Image:
+		if !at.vision {
+			at.text[att.ID] = "[image: this model can't see images]"
+		} else if jpg, err := imageprep.Prepare(data); err != nil {
+			at.text[att.ID] = "[image could not be read]"
+		} else {
+			at.images[att.ID] = base64.StdEncoding.EncodeToString(jpg)
+		}
+	default:
+		at.text[att.ID] = string(data)
+	}
+}
+
+// message builds the model's view of a stored message.
+func (at *attachments) message(b messageBody) *schema.Message {
+	role := schema.User
+	if b.Role == "assistant" {
+		role = schema.Assistant
+	}
 	if len(b.Attachments) == 0 {
-		return b.Content
+		return &schema.Message{Role: role, Content: b.Content}
 	}
 	var sb strings.Builder
+	var imgs []schema.MessageInputPart
 	for _, att := range b.Attachments {
-		text, ok := cache[att.ID]
-		if !ok {
-			_, data, err := s.readFile(ctx, a, att.ID)
-			if err != nil {
-				text = "[file no longer available]"
-			} else {
-				text = string(data)
-			}
-			cache[att.ID] = text
+		at.load(att)
+		if data, ok := at.images[att.ID]; ok {
+			imgs = append(imgs, schema.MessageInputPart{
+				Type: schema.ChatMessagePartTypeImageURL,
+				Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{
+					Base64Data: &data, MIMEType: "image/jpeg",
+				}},
+			})
+			continue
 		}
-		fmt.Fprintf(&sb, "<file name=%q>\n%s\n</file>\n\n", att.Name, text)
+		fmt.Fprintf(&sb, "<file name=%q>\n%s\n</file>\n\n", att.Name, at.text[att.ID])
 	}
 	sb.WriteString(b.Content)
-	return sb.String()
+	if len(imgs) == 0 {
+		return &schema.Message{Role: role, Content: sb.String()}
+	}
+	parts := append([]schema.MessageInputPart{{Type: schema.ChatMessagePartTypeText, Text: sb.String()}}, imgs...)
+	return &schema.Message{Role: role, UserInputMultiContent: parts}
 }
 
 func (s *Server) sendMessage(c fiber.Ctx) error {
@@ -327,88 +380,76 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	model, ok := s.Catalog.Get(meta.Model)
+	spec, ok := s.Catalog.Get(meta.Model)
 	if !ok {
 		return errs.Validation.New("this chat's model is no longer available; pick another")
 	}
 
-	// Attachments must be the user's text files, small enough to inline.
+	// Attachments must be the user's files: text small enough to inline, or
+	// images when the model has vision.
 	userMsg := messageBody{Role: "user", Content: req.Content}
-	cache := map[uuid.UUID]string{}
+	at := &attachments{s: s, ctx: ctx, a: a, vision: spec.Vision, text: map[uuid.UUID]string{}, images: map[uuid.UUID]string{}}
 	total := 0
 	for _, id := range req.FileIDs {
-		meta, data, err := s.readFile(ctx, a, id)
+		fm, data, err := s.readFile(ctx, a, id)
 		if err != nil {
 			return err
 		}
-		if !meta.Text {
-			return errs.Validation.New("%s is not a text file; only text files can be attached", meta.Name)
+		switch {
+		case fm.Image && !spec.Vision:
+			return errs.Validation.New("%s can't see images; switch to a vision model to attach %s", spec.Name, fm.Name)
+		case fm.Image:
+			if len(data) > maxImageBytes {
+				return errs.Validation.New("%s is too large to attach (max %d MB)", fm.Name, maxImageBytes>>20)
+			}
+			jpg, err := imageprep.Prepare(data)
+			if err != nil {
+				return errs.Validation.New("%s: %s", fm.Name, err.Error())
+			}
+			at.images[id] = base64.StdEncoding.EncodeToString(jpg)
+		case fm.Text:
+			if total += len(data); total > maxAttachmentBytes {
+				return errs.Validation.New("attachments are too large (max %d KB of text in total)", maxAttachmentBytes/1024)
+			}
+			at.text[id] = string(data)
+		default:
+			return errs.Validation.New("%s can't be attached; only text files and images can", fm.Name)
 		}
-		if total += len(data); total > maxAttachmentBytes {
-			return errs.Validation.New("attachments are too large (max %d KB in total)", maxAttachmentBytes/1024)
-		}
-		cache[id] = string(data)
-		userMsg.Attachments = append(userMsg.Attachments, attachment{id, meta.Name})
+		userMsg.Attachments = append(userMsg.Attachments, attachment{id, fm.Name, fm.Image})
 	}
 
 	history, err := s.loadMessages(ctx, a, chat.ID)
 	if err != nil {
 		return err
 	}
-	prompt := []llm.Message{{Role: "system", Content: s.Config.SystemPrompt}}
+	prompt := []*schema.Message{schema.SystemMessage(s.Config.SystemPrompt)}
 	for _, m := range history {
 		if m.Content == "" {
 			continue
 		}
-		prompt = append(prompt, llm.Message{Role: m.Role, Content: s.promptContent(ctx, a, m.messageBody, cache)})
+		prompt = append(prompt, at.message(m.messageBody))
 	}
-	prompt = append(prompt, llm.Message{Role: "user", Content: s.promptContent(ctx, a, userMsg, cache)})
+	prompt = append(prompt, at.message(userMsg))
 
-	prompt, estPrompt, err := llm.FitContext(model, prompt)
+	prompt, _, err = llm.FitContext(spec, prompt)
 	if err != nil {
 		return errs.Validation.New("%s", err.Error())
 	}
 
-	// Hold the worst case: estimated prompt plus a full-length reply.
-	holdAmount := model.Cost(estPrompt, model.MaxOutputTokens)
-	holdID, err := s.Ledger.Reserve(ctx, a.UserID, holdAmount)
+	// Hold the worst case for the first call (estimated prompt plus a
+	// full-length reply) now, so a lack of credit is a plain 402.
+	mm := meter.New(s.LLM, s.Ledger, a.UserID, spec)
+	holdAmount, err := mm.Reserve(ctx, prompt)
 	if err != nil {
 		return err
 	}
 
 	// Prepare everything that needs the master key now: the stream writer
 	// runs after this handler returns, when the request's MK is zeroed.
-	var serverKey []byte
-	if chat.ServerWrappedDEK != nil {
-		serverKey = s.Config.ServerKey
-	}
-	parent := uuid.NullUUID{UUID: chat.ID, Valid: true}
-	userObj, userDEK, err := vault.New(a.MK, serverKey, a.UserID, store.KindMessage, parent)
+	prepared, err := s.prepareReply(a, chat, &meta, userMsg, req.Content)
 	if err != nil {
+		mm.ReleasePending(ctx)
 		return err
-	}
-	userObj.Ciphertext, err = vault.Seal(userDEK, userObj.ID, userMsg)
-	crypto.Zero(userDEK)
-	if err != nil {
-		return err
-	}
-	replyObj, replyDEK, err := vault.New(a.MK, serverKey, a.UserID, store.KindMessage, parent)
-	if err != nil {
-		return err
-	}
-
-	var newChatCiphertext []byte
-	if meta.Title == "" {
-		meta.Title = titleFrom(req.Content)
-		chatDEK, err := vault.DEK(a.MK, chat)
-		if err != nil {
-			return err
-		}
-		newChatCiphertext, err = vault.Seal(chatDEK, chat.ID, meta)
-		crypto.Zero(chatDEK)
-		if err != nil {
-			return err
-		}
 	}
 
 	userID := a.UserID
@@ -417,7 +458,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	c.Set("X-Accel-Buffering", "no")
 
 	return c.SendStreamWriter(func(w *bufio.Writer) {
-		defer crypto.Zero(replyDEK)
+		defer crypto.Zero(prepared.replyDEK)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
@@ -433,57 +474,49 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 			return nil
 		}
 
-		_ = send("start", fiber.Map{"user_message_id": userObj.ID, "message_id": replyObj.ID, "title": meta.Title, "hold_micros": holdAmount})
+		_ = send("start", fiber.Map{"user_message_id": prepared.userObj.ID, "message_id": prepared.replyObj.ID, "title": meta.Title, "hold_micros": holdAmount})
 
-		resp, streamErr := s.LLM.Stream(ctx, llm.ChatRequest{
-			Model: model.Upstream, Messages: prompt, MaxTokens: model.MaxOutputTokens,
-		}, func(delta string) error {
-			return send("delta", fiber.Map{"text": delta})
-		})
-
-		// Nothing generated and nothing reported: the request never ran.
-		if resp == nil || (resp.Content == "" && !resp.Usage.Reported) {
-			if err := s.Ledger.Release(ctx, holdID); err != nil {
-				slog.Error("release hold", "err", err)
+		var content strings.Builder
+		var streamErr error
+		sr, err := mm.Stream(ctx, prompt)
+		if err != nil {
+			streamErr = err
+		} else {
+			for {
+				msg, err := sr.Recv()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					streamErr = err
+					break
+				}
+				if msg.Content == "" {
+					continue
+				}
+				content.WriteString(msg.Content)
+				if send("delta", fiber.Map{"text": msg.Content}) != nil {
+					streamErr = errClientGone
+					break
+				}
 			}
+			sr.Close()
+		}
+		mm.ReleasePending(ctx)
+		mm.Wait()
+
+		usage := mm.Usage()
+		if usage.Calls == 0 {
 			slog.Warn("llm request failed", "err", streamErr)
 			_ = send("error", fiber.Map{"error": "upstream", "message": "the model did not respond; nothing was charged"})
 			return
 		}
 
-		usage := resp.Usage
-		if !usage.Reported {
-			// Cancelled mid-stream: bill our pessimistic estimate.
-			usage.PromptTokens = estPrompt
-			usage.CompletionTokens = llm.EstimateTokens(resp.Content)
-		}
-		cost := model.ChargeFor(usage)
-		if err := s.Ledger.Settle(ctx, userID, holdID, billing.Usage{
-			Model: model.ID, PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens, CostMicros: cost,
-		}); err != nil {
-			slog.Error("settle usage", "err", err, "user", userID)
-		}
-
 		reply := messageBody{
-			Role: "assistant", Content: resp.Content, Model: model.ID, Partial: streamErr != nil,
-			Usage: &messageUsage{usage.PromptTokens, usage.CompletionTokens, cost},
+			Role: "assistant", Content: content.String(), Model: spec.ID, Partial: streamErr != nil,
+			Usage: &messageUsage{usage.PromptTokens, usage.CompletionTokens, usage.CostMicros},
 		}
-		var err error
-		if replyObj.Ciphertext, err = vault.Seal(replyDEK, replyObj.ID, reply); err == nil {
-			err = s.Store.Tx(ctx, func(tx pgx.Tx) error {
-				if err := store.InsertObject(ctx, tx, userObj); err != nil {
-					return err
-				}
-				if err := store.InsertObject(ctx, tx, replyObj); err != nil {
-					return err
-				}
-				if newChatCiphertext != nil {
-					return store.UpdateCiphertext(ctx, tx, chat.ID, newChatCiphertext)
-				}
-				return store.Touch(ctx, tx, chat.ID)
-			})
-		}
-		if err != nil {
+		if err := s.storeReply(ctx, chat.ID, prepared, reply); err != nil {
 			slog.Error("store messages", "err", err, "user", userID)
 			_ = send("error", fiber.Map{"error": "internal", "message": "reply could not be saved"})
 			return
@@ -494,10 +527,72 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		}
 		balance, _ := s.Ledger.Balance(ctx, userID)
 		_ = send("done", fiber.Map{
-			"message":      messageView{replyObj.ID, reply, replyObj.CreatedAt},
-			"user_message": messageView{userObj.ID, userMsg, userObj.CreatedAt},
+			"message":      messageView{prepared.replyObj.ID, reply, prepared.replyObj.CreatedAt},
+			"user_message": messageView{prepared.userObj.ID, userMsg, prepared.userObj.CreatedAt},
 			"balance":      balance,
 		})
+	})
+}
+
+// preparedReply holds the sealed user message and the reply's object and key,
+// made while the master key is still available.
+type preparedReply struct {
+	userObj, replyObj *store.Object
+	replyDEK          []byte
+	chatCiphertext    []byte // set when the chat gets its title
+}
+
+func (s *Server) prepareReply(a *authCtx, chat *store.Object, meta *chatMeta, userMsg messageBody, content string) (*preparedReply, error) {
+	var serverKey []byte
+	if chat.ServerWrappedDEK != nil {
+		serverKey = s.Config.ServerKey
+	}
+	parent := uuid.NullUUID{UUID: chat.ID, Valid: true}
+	p := &preparedReply{}
+	userObj, userDEK, err := vault.New(a.MK, serverKey, a.UserID, store.KindMessage, parent)
+	if err != nil {
+		return nil, err
+	}
+	userObj.Ciphertext, err = vault.Seal(userDEK, userObj.ID, userMsg)
+	crypto.Zero(userDEK)
+	if err != nil {
+		return nil, err
+	}
+	p.userObj = userObj
+	if p.replyObj, p.replyDEK, err = vault.New(a.MK, serverKey, a.UserID, store.KindMessage, parent); err != nil {
+		return nil, err
+	}
+	if meta.Title == "" {
+		meta.Title = titleFrom(content)
+		chatDEK, err := vault.DEK(a.MK, chat)
+		if err != nil {
+			return nil, err
+		}
+		p.chatCiphertext, err = vault.Seal(chatDEK, chat.ID, meta)
+		crypto.Zero(chatDEK)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
+}
+
+func (s *Server) storeReply(ctx context.Context, chatID uuid.UUID, p *preparedReply, reply messageBody) error {
+	var err error
+	if p.replyObj.Ciphertext, err = vault.Seal(p.replyDEK, p.replyObj.ID, reply); err != nil {
+		return err
+	}
+	return s.Store.Tx(ctx, func(tx pgx.Tx) error {
+		if err := store.InsertObject(ctx, tx, p.userObj); err != nil {
+			return err
+		}
+		if err := store.InsertObject(ctx, tx, p.replyObj); err != nil {
+			return err
+		}
+		if p.chatCiphertext != nil {
+			return store.UpdateCiphertext(ctx, tx, chatID, p.chatCiphertext)
+		}
+		return store.Touch(ctx, tx, chatID)
 	})
 }
 

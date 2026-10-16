@@ -1,6 +1,11 @@
 package llm
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+
+	"github.com/cloudwego/eino/schema"
+)
 
 // Token estimates run before a request, to size the credit hold and fit the
 // history into the context window. They are deliberately pessimistic (about
@@ -16,10 +21,41 @@ func EstimateTokens(s string) int {
 	return (len(s) + bytesPerToken - 1) / bytesPerToken
 }
 
-func EstimateMessages(msgs []Message) int {
+func (m Model) messageTokens(msg *schema.Message) int {
+	n := perMessageTokens + EstimateTokens(msg.Content)
+	for _, p := range msg.UserInputMultiContent {
+		switch p.Type {
+		case schema.ChatMessagePartTypeText:
+			n += EstimateTokens(p.Text)
+		case schema.ChatMessagePartTypeImageURL:
+			n += m.ImageTokens
+		}
+	}
+	for _, tc := range msg.ToolCalls {
+		n += EstimateTokens(tc.Function.Name) + EstimateTokens(tc.Function.Arguments)
+	}
+	return n
+}
+
+// EstimateMessages estimates the prompt tokens for msgs sent to m.
+func (m Model) EstimateMessages(msgs []*schema.Message) int {
 	n := perRequestTokens
-	for _, m := range msgs {
-		n += perMessageTokens + EstimateTokens(m.Content)
+	for _, msg := range msgs {
+		n += m.messageTokens(msg)
+	}
+	return n
+}
+
+// EstimateTools estimates the prompt tokens taken by tool definitions.
+func EstimateTools(tools []*schema.ToolInfo) int {
+	n := 0
+	for _, t := range tools {
+		n += perMessageTokens + EstimateTokens(t.Name) + EstimateTokens(t.Desc)
+		if s, err := t.ParamsOneOf.ToJSONSchema(); err == nil && s != nil {
+			if raw, err := json.Marshal(s); err == nil {
+				n += EstimateTokens(string(raw))
+			}
+		}
 	}
 	return n
 }
@@ -29,22 +65,22 @@ var ErrPromptTooLong = errors.New("message is too long for this model's context 
 // FitContext keeps the system prompt (if first) and the newest messages that
 // fit in the model's context alongside a full-length reply. Older messages are
 // dropped first. It returns the kept messages and their token estimate.
-func FitContext(m Model, msgs []Message) ([]Message, int, error) {
+func FitContext(m Model, msgs []*schema.Message) ([]*schema.Message, int, error) {
 	budget := m.ContextTokens - m.MaxOutputTokens - perRequestTokens
 	if len(msgs) == 0 {
 		return nil, 0, errors.New("no messages")
 	}
 
-	var system []Message
+	var system []*schema.Message
 	rest := msgs
-	if msgs[0].Role == "system" {
+	if msgs[0].Role == schema.System {
 		system, rest = msgs[:1], msgs[1:]
-		budget -= perMessageTokens + EstimateTokens(msgs[0].Content)
+		budget -= m.messageTokens(msgs[0])
 	}
 
 	kept := 0
 	for i := len(rest) - 1; i >= 0; i-- {
-		cost := perMessageTokens + EstimateTokens(rest[i].Content)
+		cost := m.messageTokens(rest[i])
 		if cost > budget {
 			break
 		}
@@ -55,6 +91,6 @@ func FitContext(m Model, msgs []Message) ([]Message, int, error) {
 		return nil, 0, ErrPromptTooLong
 	}
 
-	out := append(append([]Message{}, system...), rest[len(rest)-kept:]...)
-	return out, EstimateMessages(out), nil
+	out := append(append([]*schema.Message{}, system...), rest[len(rest)-kept:]...)
+	return out, m.EstimateMessages(out), nil
 }

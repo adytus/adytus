@@ -16,6 +16,7 @@ import (
 
 	"github.com/reaganiwadha/adytus/apps/api/internal/crypto"
 	"github.com/reaganiwadha/adytus/apps/api/internal/errs"
+	"github.com/reaganiwadha/adytus/apps/api/internal/imageprep"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
 	"github.com/reaganiwadha/adytus/apps/api/internal/vault"
 )
@@ -26,8 +27,10 @@ type fileMeta struct {
 	Name string `json:"name"`
 	Mime string `json:"mime"`
 	Size int64  `json:"size"`
-	// Text files can be attached to chat messages.
-	Text bool `json:"text"`
+	// Text files can be attached to chat messages, and images too when the
+	// chat's model has vision.
+	Text  bool `json:"text"`
+	Image bool `json:"image"`
 }
 
 type fileView struct {
@@ -88,7 +91,7 @@ func (s *Server) uploadFile(c fiber.Ctx) error {
 	if mt == "" {
 		mt = mime.TypeByExtension(filepath.Ext(name))
 	}
-	meta := fileMeta{Name: name, Mime: mt, Size: int64(len(data)), Text: isText(data)}
+	meta := fileMeta{Name: name, Mime: mt, Size: int64(len(data)), Text: isText(data), Image: imageprep.Detect(data)}
 
 	a := mustAuth(c)
 	o, dek, err := vault.New(a.MK, nil, a.UserID, store.KindFile, uuid.NullUUID{})

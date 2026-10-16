@@ -3,6 +3,7 @@ package server
 import (
 	"time"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/limiter"
@@ -22,7 +23,7 @@ type Deps struct {
 	Store    *store.Store
 	Ledger   *billing.Ledger
 	Catalog  *llm.Catalog
-	LLM      llm.Provider
+	LLM      model.ToolCallingChatModel
 	Payments billing.Gateway
 	Sessions *session.Store
 	Blobs    blob.Store

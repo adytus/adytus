@@ -49,12 +49,9 @@ func run() error {
 		return err
 	}
 
-	var provider llm.Provider
-	switch cfg.LLMProvider {
-	case "openrouter":
-		provider = llm.NewOpenRouter(cfg.LLMBaseURL, cfg.LLMAPIKey)
-	default:
-		provider = llm.NewOllama(cfg.LLMBaseURL)
+	chatModel, err := llm.NewChatModel(ctx, cfg.LLMProvider, cfg.LLMBaseURL, cfg.LLMAPIKey)
+	if err != nil {
+		return err
 	}
 
 	sessions := session.NewStore(cfg.SessionTTL, cfg.SessionIdle)
@@ -65,7 +62,7 @@ func run() error {
 		Store:    &store.Store{DB: pool},
 		Ledger:   &billing.Ledger{DB: pool, DailyCapMicros: cfg.DailyCapMicros, HoldTTL: cfg.HoldTTL},
 		Catalog:  catalog,
-		LLM:      provider,
+		LLM:      chatModel,
 		Payments: billing.MockGateway{},
 		Sessions: sessions,
 		Blobs:    blobs,

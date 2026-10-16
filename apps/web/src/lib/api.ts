@@ -1,19 +1,211 @@
-export type Plan = {
+export type User = { id: string; email: string; created_at: string };
+export type Plan = { id: string; name: string; price_micros: number; credit_micros: number };
+export type Model = {
 	id: string;
 	name: string;
-	price_micros: number;
+	prompt_usd_per_mtok: number;
+	completion_usd_per_mtok: number;
+	context_tokens: number;
+	max_output_tokens: number;
+	vision: boolean;
+};
+export type Balance = {
 	credit_micros: number;
+	held_micros: number;
+	available_micros: number;
+	spent_today_micros: number;
+	daily_cap_micros: number;
+};
+export type LedgerEntry = {
+	id: number;
+	delta_micros: number;
+	reason: string;
+	model: string | null;
+	prompt_tokens: number | null;
+	completion_tokens: number | null;
+	created_at: string;
+};
+export type Chat = {
+	id: string;
+	title: string;
+	model: string;
+	offline: boolean;
+	created_at: string;
+	updated_at: string;
+};
+export type Usage = { prompt_tokens: number; completion_tokens: number; cost_micros: number };
+export type Attachment = { id: string; name: string; image?: boolean };
+export type Message = {
+	id: string;
+	role: 'user' | 'assistant';
+	content: string;
+	attachments?: Attachment[];
+	model?: string;
+	usage?: Usage;
+	partial?: boolean;
+	created_at: string;
+};
+export type FileItem = {
+	id: string;
+	name: string;
+	mime: string;
+	size: number;
+	text: boolean;
+	image: boolean;
+	offline: boolean;
+	created_at: string;
 };
 
-async function get<T>(path: string, fetchFn: typeof fetch = fetch): Promise<T> {
-	const res = await fetchFn(path);
-	if (!res.ok) throw new Error(`${path}: ${res.status}`);
+export class ApiError extends Error {
+	constructor(
+		public status: number,
+		public code: string,
+		message: string
+	) {
+		super(message);
+	}
+}
+
+async function fail(res: Response): Promise<never> {
+	let code = 'error';
+	let message = `Request failed (${res.status})`;
+	try {
+		const body = await res.json();
+		code = body.error ?? code;
+		message = body.message ?? message;
+	} catch {
+		// non-JSON error body
+	}
+	throw new ApiError(res.status, code, message);
+}
+
+async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+	const init: RequestInit = { method, credentials: 'same-origin', headers: {} };
+	if (body instanceof FormData) {
+		init.body = body;
+	} else if (body !== undefined) {
+		init.body = JSON.stringify(body);
+		(init.headers as Record<string, string>)['Content-Type'] = 'application/json';
+	}
+	const res = await fetch(path, init);
+	if (res.status === 401 && !path.startsWith('/api/auth/') && path !== '/api/me') {
+		// Session expired or the server restarted (sessions are memory-only).
+		location.assign('/login');
+	}
+	if (!res.ok) await fail(res);
+	if (res.status === 204) return undefined as T;
 	return res.json() as Promise<T>;
 }
 
+const get = <T>(p: string) => call<T>('GET', p);
+
 export const api = {
-	models: (f?: typeof fetch) => get<{ models: string[] }>('/api/models', f),
-	plans: (f?: typeof fetch) => get<{ plans: Plan[] }>('/api/plans', f)
+	models: () => get<{ models: Model[]; default: string }>('/api/models'),
+	plans: () => get<{ plans: Plan[] }>('/api/plans'),
+
+	me: () => get<{ user: User }>('/api/me'),
+	signup: (email: string, password: string) =>
+		call<{ user: User; recovery_code: string }>('POST', '/api/auth/signup', { email, password }),
+	login: (email: string, password: string) =>
+		call<{ user: User }>('POST', '/api/auth/login', { email, password }),
+	recover: (email: string, recovery_code: string, new_password: string) =>
+		call<{ user: User; recovery_code: string }>('POST', '/api/auth/recover', {
+			email,
+			recovery_code,
+			new_password
+		}),
+	logout: () => call<void>('POST', '/api/auth/logout'),
+	changePassword: (current_password: string, new_password: string) =>
+		call<{ recovery_code: string }>('POST', '/api/auth/password', {
+			current_password,
+			new_password
+		}),
+
+	balance: () => get<{ balance: Balance }>('/api/billing/balance'),
+	ledger: () => get<{ entries: LedgerEntry[] }>('/api/billing/ledger'),
+	subscribe: (plan_id: string) =>
+		call<{ balance: Balance; payment_ref: string }>('POST', '/api/billing/subscribe', { plan_id }),
+
+	chats: () => get<{ chats: Chat[] }>('/api/chats'),
+	createChat: (model?: string) => call<{ chat: Chat }>('POST', '/api/chats', { model }),
+	chat: (id: string) => get<{ chat: Chat; messages: Message[] }>(`/api/chats/${id}`),
+	updateChat: (id: string, patch: { title?: string; model?: string }) =>
+		call<{ chat: Chat }>('PATCH', `/api/chats/${id}`, patch),
+	deleteChat: (id: string) => call<void>('DELETE', `/api/chats/${id}`),
+	setChatOffline: (id: string, enabled: boolean) =>
+		call<{ chat: Chat }>('PUT', `/api/chats/${id}/offline`, { enabled }),
+
+	files: () => get<{ files: FileItem[] }>('/api/files'),
+	upload: (file: File) => {
+		const fd = new FormData();
+		fd.append('file', file);
+		return call<{ file: FileItem }>('POST', '/api/files', fd);
+	},
+	deleteFile: (id: string) => call<void>('DELETE', `/api/files/${id}`),
+	setFileOffline: (id: string, enabled: boolean) =>
+		call<{ file: FileItem }>('PUT', `/api/files/${id}/offline`, { enabled }),
+	fileURL: (id: string) => `/api/files/${id}/content`
 };
 
-export const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
+export type StreamHandlers = {
+	start?: (d: { user_message_id: string; message_id: string; title: string; hold_micros: number }) => void;
+	delta?: (d: { text: string }) => void;
+	done?: (d: { message: Message; user_message: Message; balance: Balance }) => void;
+	error?: (d: { error: string; message: string }) => void;
+};
+
+// sendMessage posts a message and reads the SSE reply. EventSource cannot
+// POST, so the stream is parsed by hand.
+export async function sendMessage(
+	chatID: string,
+	content: string,
+	fileIDs: string[],
+	on: StreamHandlers,
+	signal?: AbortSignal
+) {
+	const res = await fetch(`/api/chats/${chatID}/messages`, {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+		body: JSON.stringify({ content, file_ids: fileIDs }),
+		signal
+	});
+	if (!res.ok) await fail(res);
+	if (!res.body) throw new ApiError(0, 'stream', 'The browser did not expose the reply stream');
+
+	const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+	let buf = '';
+	for (;;) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		buf += value;
+		let i;
+		while ((i = buf.indexOf('\n\n')) >= 0) {
+			const frame = buf.slice(0, i);
+			buf = buf.slice(i + 2);
+			let event = 'message';
+			let data = '';
+			for (const line of frame.split('\n')) {
+				if (line.startsWith('event: ')) event = line.slice(7);
+				else if (line.startsWith('data: ')) data += line.slice(6);
+			}
+			if (!data) continue;
+			const handler = on[event as keyof StreamHandlers] as ((d: unknown) => void) | undefined;
+			handler?.(JSON.parse(data));
+		}
+	}
+}
+
+export const usd = (micros: number, digits = 2) => {
+	const v = micros / 1_000_000;
+	if (micros !== 0 && Math.abs(v) < 0.01) return `$${v.toFixed(6).replace(/0+$/, '')}`;
+	return `$${v.toFixed(digits)}`;
+};
+
+export const bytes = (n: number) => {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+	return `${(n / 1024 ** 2).toFixed(1)} MB`;
+};
+
+export const shortID = (id: string) => id.replace(/-/g, '').slice(-8).toUpperCase();

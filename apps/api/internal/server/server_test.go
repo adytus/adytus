@@ -9,7 +9,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"image"
+	"image/jpeg"
+	pngenc "image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -20,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,46 +36,67 @@ import (
 	"github.com/reaganiwadha/adytus/apps/api/internal/config"
 	"github.com/reaganiwadha/adytus/apps/api/internal/crypto"
 	"github.com/reaganiwadha/adytus/apps/api/internal/db"
+	"github.com/reaganiwadha/adytus/apps/api/internal/imageprep"
 	"github.com/reaganiwadha/adytus/apps/api/internal/llm"
 	"github.com/reaganiwadha/adytus/apps/api/internal/session"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
 	"github.com/reaganiwadha/adytus/apps/api/internal/vault"
 )
 
-// fakeLLM echoes the last user message and reports fixed usage.
+// fakeLLM is an Eino chat model that echoes the last user message and
+// reports fixed usage.
 type fakeLLM struct {
-	mu      sync.Mutex
-	lastReq llm.ChatRequest
-	fail    bool
-	noUsage bool
+	mu       sync.Mutex
+	lastMsgs []*schema.Message
+	lastOpts *model.Options
+	fail     bool
+	noUsage  bool
 }
 
-func (f *fakeLLM) Stream(_ context.Context, req llm.ChatRequest, onDelta func(string) error) (*llm.ChatResponse, error) {
+func (f *fakeLLM) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+	return nil, errors.New("not used")
+}
+
+func (f *fakeLLM) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) { return f, nil }
+
+func (f *fakeLLM) Stream(_ context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	f.mu.Lock()
-	f.lastReq = req
+	f.lastMsgs, f.lastOpts = msgs, model.GetCommonOptions(nil, opts...)
 	fail, noUsage := f.fail, f.noUsage
 	f.mu.Unlock()
 	if fail {
 		return nil, io.ErrUnexpectedEOF
 	}
-	last := req.Messages[len(req.Messages)-1].Content
-	reply := "echo: " + last
-	for _, part := range []string{reply[:len(reply)/2], reply[len(reply)/2:]} {
-		if err := onDelta(part); err != nil {
-			return &llm.ChatResponse{Content: part}, err
-		}
+	reply := "echo: " + text(msgs[len(msgs)-1])
+	chunks := []*schema.Message{
+		schema.AssistantMessage(reply[:len(reply)/2], nil),
+		schema.AssistantMessage(reply[len(reply)/2:], nil),
 	}
-	resp := &llm.ChatResponse{Content: reply}
 	if !noUsage {
-		resp.Usage = llm.Usage{PromptTokens: 1000, CompletionTokens: 100, Reported: true}
+		chunks = append(chunks, &schema.Message{Role: schema.Assistant, ResponseMeta: &schema.ResponseMeta{
+			Usage: &schema.TokenUsage{PromptTokens: 1000, CompletionTokens: 100},
+		}})
 	}
-	return resp, nil
+	return schema.StreamReaderFromArray(chunks), nil
+}
+
+// text is a message's text, whether plain or in content parts.
+func text(m *schema.Message) string {
+	if len(m.UserInputMultiContent) == 0 {
+		return m.Content
+	}
+	var sb strings.Builder
+	for _, p := range m.UserInputMultiContent {
+		sb.WriteString(p.Text)
+	}
+	return sb.String()
 }
 
 var testModels = []llm.Model{
 	{ID: "cheap", Upstream: "up-cheap", PromptUSDPerMTok: 1, CompletionUSDPerMTok: 2, ContextTokens: 8000, MaxOutputTokens: 500},
 	// $100 per million output tokens: a 500-token hold costs $0.05.
 	{ID: "pricey", Upstream: "up-pricey", PromptUSDPerMTok: 50, CompletionUSDPerMTok: 100, ContextTokens: 8000, MaxOutputTokens: 500},
+	{ID: "eyes", Upstream: "up-eyes", PromptUSDPerMTok: 1, CompletionUSDPerMTok: 2, ContextTokens: 8000, MaxOutputTokens: 500, Vision: true, ImageTokens: 1500},
 }
 
 type env struct {
@@ -262,8 +290,8 @@ func TestChatFlowChargesAndEncrypts(t *testing.T) {
 	}
 
 	// System prompt is sent with the configured upstream model and cap.
-	if e.llm.lastReq.Model != "up-cheap" || e.llm.lastReq.MaxTokens != 500 || e.llm.lastReq.Messages[0].Role != "system" {
-		t.Fatalf("unexpected upstream request: %+v", e.llm.lastReq)
+	if o := e.llm.lastOpts; *o.Model != "up-cheap" || *o.MaxTokens != 500 || e.llm.lastMsgs[0].Role != schema.System {
+		t.Fatalf("unexpected upstream request: model %s, max %d, first %+v", *o.Model, *o.MaxTokens, e.llm.lastMsgs[0])
 	}
 
 	got := e.must(200, "GET", "/api/chats/"+chatID, nil)
@@ -467,7 +495,7 @@ func TestFilesEncryptedAttachedAndOfflineOptIn(t *testing.T) {
 	if status, ev := e.sendMessage(chatID, "summarize", fileID); status != 200 || last(ev).Name != "done" {
 		t.Fatalf("send with attachment: %d", status)
 	}
-	sent := e.llm.lastReq.Messages[len(e.llm.lastReq.Messages)-1].Content
+	sent := text(e.llm.lastMsgs[len(e.llm.lastMsgs)-1])
 	if !strings.Contains(sent, "quarterly numbers: 42") || !strings.Contains(sent, `name="notes.md"`) {
 		t.Fatalf("attachment not inlined: %q", sent)
 	}
@@ -506,6 +534,60 @@ func TestFilesEncryptedAttachedAndOfflineOptIn(t *testing.T) {
 	e.must(204, "DELETE", "/api/files/"+fileID, nil)
 	if len(e.blobs.Keys()) != 1 {
 		t.Fatalf("blob not deleted: %d left", len(e.blobs.Keys()))
+	}
+}
+
+func TestImageAttachmentsNeedVision(t *testing.T) {
+	e := newEnv(t)
+	e.signup("h@example.com")
+	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+
+	var png bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 2000, 1000))
+	if err := pngenc.Encode(&png, img); err != nil {
+		t.Fatal(err)
+	}
+	file := e.upload("photo.png", png.Bytes())
+	if file["image"] != true || file["text"] != false {
+		t.Fatalf("file meta: %v", file)
+	}
+	fileID := file["id"].(string)
+
+	chatID := e.must(201, "POST", "/api/chats", nil)["chat"].(map[string]any)["id"].(string)
+	if status, _ := e.sendMessage(chatID, "what is this?", fileID); status != 400 {
+		t.Fatalf("image on a text-only model should be refused, got %d", status)
+	}
+
+	e.must(200, "PATCH", "/api/chats/"+chatID, map[string]string{"model": "eyes"})
+	if status, ev := e.sendMessage(chatID, "what is this?", fileID); status != 200 || last(ev).Name != "done" {
+		t.Fatalf("send with image: %d", status)
+	}
+	parts := e.llm.lastMsgs[len(e.llm.lastMsgs)-1].UserInputMultiContent
+	if len(parts) != 2 || parts[0].Text != "what is this?" || parts[1].Image == nil {
+		t.Fatalf("unexpected parts: %+v", parts)
+	}
+	im := parts[1].Image
+	raw, err := base64.StdEncoding.DecodeString(*im.Base64Data)
+	if err != nil || im.MIMEType != "image/jpeg" {
+		t.Fatalf("image part: %s %v", im.MIMEType, err)
+	}
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(raw))
+	if err != nil || cfg.Width != imageprep.MaxSide || cfg.Height != imageprep.MaxSide/2 {
+		t.Fatalf("image not downscaled: %+v %v", cfg, err)
+	}
+
+	// The image stays in the history for the next turn.
+	e.sendMessage(chatID, "and now?")
+	var images int
+	for _, m := range e.llm.lastMsgs {
+		for _, p := range m.UserInputMultiContent {
+			if p.Image != nil {
+				images++
+			}
+		}
+	}
+	if images != 1 {
+		t.Fatalf("history images = %d", images)
 	}
 }
 

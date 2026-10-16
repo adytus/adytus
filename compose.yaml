@@ -19,10 +19,18 @@ services:
 
   # Local stand-in for OpenRouter. Pull the model once with:
   #   docker-compose exec ollama ollama pull gemma3:270m
+  #   docker-compose exec ollama ollama pull qwen2.5vl:3b   # vision
   ollama:
     image: ollama/ollama:latest
     ports: ["11434:11434"]
     volumes: [ollamadata:/root/.ollama]
+    environment:
+      # Ollama's default window is 4096 and its OpenAI-compatible API can't
+      # change it per request; prompts over it are cut from the front without
+      # an error. Keep this equal to context_tokens in models.ollama.json.
+      OLLAMA_CONTEXT_LENGTH: "16384"
+      # Keep both catalog models resident instead of swapping on each request.
+      OLLAMA_MAX_LOADED_MODELS: "2"
 
 volumes:
   pgdata:

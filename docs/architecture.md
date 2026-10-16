@@ -1,6 +1,6 @@
 # Architecture Notes
 
-Initial thinking from the brief; nothing here is final or implemented.
+Started as notes on the brief; decisions that have been implemented are marked.
 
 ## Stack
 
@@ -9,9 +9,9 @@ Initial thinking from the brief; nothing here is final or implemented.
 | Backend | Go, Fiber, validator lib |
 | Go libs | guregu/null, pressly/goose, joomcode/errorx |
 | Database | Postgres (local dev: pgsqlite, see caveats) |
-| Object storage | S3-compatible (MinIO locally) |
+| Object storage | S3-compatible (SeaweedFS locally) |
 | Frontend | Svelte, Bun |
-| LLM | OpenRouter (single backend key), Ollama for local mock |
+| LLM | OpenRouter (single backend key), Ollama for local mock, both through Eino |
 
 ## Encryption model
 
@@ -42,5 +42,13 @@ Sessions as decrypt hosts:
 ## Local dev notes
 
 - **pgsqlite** is a SQLite-backed Postgres wire-protocol proxy. Its README lists no `BYTEA` and no explicit `ON CONFLICT` / `TIMESTAMPTZ` support, which is a poor fit for encrypted blob storage. Prefer a real Postgres (docker compose or a local install) and treat pgsqlite as a fallback; verify before committing to it.
-- **Mockable chat API**: define a provider interface in the backend with OpenRouter and OpenAI-compatible (Ollama) implementations, selected by config.
+- **Mockable chat API (decided)**: the backend talks to models through [Eino](https://github.com/cloudwego/eino)'s `ToolCallingChatModel`, using the eino-ext OpenAI adapter for both OpenRouter and Ollama. Eino also brings tool calling and agents (ReAct, graphs), so we don't maintain our own tool-calling stack.
 - **Payments** are mocked behind an interface as well.
+
+## Model calls and billing (implemented)
+
+- **Metering per call.** `internal/meter` wraps the Eino model. Every `Generate`/`Stream` call reserves a hold (estimated prompt plus the catalog's max output), forces the catalog's upstream model and output limit, and settles what the call used. An agent loop therefore pays step by step and stops at the first step the user can't afford. The chat handler reserves the first call's hold before responding, so a lack of credit is a plain 402.
+- **What gets billed.** OpenRouter's reported `usage.cost` when present (read off the HTTP stream, since Eino's adapter drops it), else provider-reported token counts at catalog prices, else (a stream cut off before usage arrived) our pessimistic estimate. A call that produced nothing is released, not billed.
+- **Images.** Vision models accept image attachments. Images are downscaled to 1024px and re-encoded as JPEG before sending, which also strips metadata; the catalog's `image_tokens` is the per-image allowance used for holds.
+- **Recovery code (product decision).** Signup and password change issue a recovery code that also wraps the MK; it's the only way back in after a lost password.
+- **Sessions are in memory**, so restarting the API signs everyone out. Fine for one instance; several instances would need a shared session store.

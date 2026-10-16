@@ -21,6 +21,11 @@ type Model struct {
 	CompletionUSDPerMTok float64 `json:"completion_usd_per_mtok"`
 	ContextTokens        int     `json:"context_tokens"`
 	MaxOutputTokens      int     `json:"max_output_tokens"`
+	// Vision models accept image attachments. ImageTokens is the per-image
+	// prompt allowance used for holds; images are downscaled before sending
+	// so the real count stays under it.
+	Vision      bool `json:"vision"`
+	ImageTokens int  `json:"image_tokens,omitempty"`
 }
 
 // Cost in micro-USD, rounded up.
@@ -65,6 +70,8 @@ func NewCatalog(models []Model) (*Catalog, error) {
 			return nil, fmt.Errorf("model catalog: %s: need 0 < max_output_tokens < context_tokens", m.ID)
 		case m.PromptUSDPerMTok < 0 || m.CompletionUSDPerMTok < 0:
 			return nil, fmt.Errorf("model catalog: %s: negative price", m.ID)
+		case m.Vision && m.ImageTokens <= 0:
+			return nil, fmt.Errorf("model catalog: %s: vision models need image_tokens", m.ID)
 		}
 		if _, dup := c.byID[m.ID]; dup {
 			return nil, fmt.Errorf("model catalog: duplicate id %s", m.ID)

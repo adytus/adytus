@@ -1,10 +1,5 @@
-import { api } from '#lib/api.ts';
+import { redirect } from '@sveltejs/kit';
 
-export const load = async ({ fetch }) => {
-	try {
-		const [{ plans }, { models }] = await Promise.all([api.plans(fetch), api.models(fetch)]);
-		return { plans, models, offline: false };
-	} catch {
-		return { plans: [], models: [], offline: true };
-	}
+export const load = () => {
+	redirect(307, '/chat');
 };
