@@ -1,0 +1,22 @@
+{
+  "models": [
+    {
+      "id": "gemma3-270m",
+      "upstream": "gemma3:270m",
+      "name": "Gemma 3 270M",
+      "prompt_usd_per_mtok": 0.05,
+      "completion_usd_per_mtok": 0.2,
+      "context_tokens": 32768,
+      "max_output_tokens": 1024
+    },
+    {
+      "id": "gemma3-270m-frontier-priced",
+      "upstream": "gemma3:270m",
+      "name": "Gemma 3 270M (frontier pricing)",
+      "prompt_usd_per_mtok": 15,
+      "completion_usd_per_mtok": 75,
+      "context_tokens": 32768,
+      "max_output_tokens": 1024
+    }
+  ]
+}

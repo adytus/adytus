@@ -4,17 +4,18 @@ package llm
 
 import (
 	"context"
-	"slices"
 )
 
 type Message struct {
-	Role    string `json:"role" validate:"required,oneof=system user assistant"`
-	Content string `json:"content" validate:"required"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type ChatRequest struct {
-	Model    string    `json:"model" validate:"required"`
-	Messages []Message `json:"messages" validate:"required,min=1,dive"`
+	// Model is the upstream model name, not the catalog ID.
+	Model     string    `json:"model"`
+	Messages  []Message `json:"messages"`
+	MaxTokens int       `json:"max_tokens,omitempty"`
 }
 
 type Usage struct {
@@ -23,6 +24,9 @@ type Usage struct {
 	// CostMicros is the upstream cost in micro-USD when the provider reports
 	// it (OpenRouter does); zero otherwise.
 	CostMicros int64 `json:"cost_micros"`
+	// Reported is false when the stream ended without a usage block (e.g. the
+	// client disconnected and the request was cancelled).
+	Reported bool `json:"-"`
 }
 
 type ChatResponse struct {
@@ -31,11 +35,8 @@ type ChatResponse struct {
 }
 
 type Provider interface {
-	Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error)
+	// Stream sends a chat request and calls onDelta for each content chunk.
+	// If onDelta returns an error the request is cancelled; the partial
+	// response is still returned alongside that error.
+	Stream(ctx context.Context, req ChatRequest, onDelta func(string) error) (*ChatResponse, error)
 }
-
-// Whitelist restricts which models users may call. Models are picked so that
-// they are served by providers with no training and no data retention.
-type Whitelist []string
-
-func (w Whitelist) Allows(model string) bool { return slices.Contains(w, model) }

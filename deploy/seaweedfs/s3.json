@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "adytus",
+      "credentials": [{ "accessKey": "adytus", "secretKey": "adytus-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

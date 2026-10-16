@@ -72,3 +72,23 @@ func TestAuthKeyAndKEKDiffer(t *testing.T) {
 		t.Fatal("auth key and KEK must differ")
 	}
 }
+
+func TestRecoveryCodeUnwrapsMK(t *testing.T) {
+	code, err := NewRecoveryCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(code) != 39 {
+		t.Fatalf("unexpected code format %q", code)
+	}
+	mk, _ := NewKey()
+	wrapped, _ := Wrap(RecoveryKey(code), mk, nil)
+
+	// Users may type it in lowercase without dashes.
+	typed := bytes.ToLower([]byte(code))
+	typed = bytes.ReplaceAll(typed, []byte("-"), nil)
+	got, err := Unwrap(RecoveryKey(string(typed)), wrapped, nil)
+	if err != nil || !bytes.Equal(got, mk) {
+		t.Fatalf("recovery failed: %v", err)
+	}
+}

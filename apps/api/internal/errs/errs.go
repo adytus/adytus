@@ -20,6 +20,7 @@ var (
 	Forbidden      = ns.NewType("forbidden")
 	Conflict       = ns.NewType("conflict", errorx.Duplicate())
 	BudgetExceeded = ns.NewType("budget_exceeded")
+	RateLimited    = ns.NewType("rate_limited")
 	Upstream       = ns.NewType("upstream")
 	Internal       = ns.NewType("internal")
 )
@@ -31,6 +32,7 @@ var statusByType = map[*errorx.Type]int{
 	Forbidden:      fiber.StatusForbidden,
 	Conflict:       fiber.StatusConflict,
 	BudgetExceeded: fiber.StatusPaymentRequired,
+	RateLimited:    fiber.StatusTooManyRequests,
 	Upstream:       fiber.StatusBadGateway,
 }
 
@@ -61,3 +63,5 @@ func Handler(c fiber.Ctx, err error) error {
 	slog.Error("unhandled error", "path", c.Path(), "err", err)
 	return c.Status(fiber.StatusInternalServerError).JSON(body{"internal", "internal error"})
 }
+
+func IsNotFound(err error) bool { return errorx.IsOfType(err, NotFound) }
