@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { api, ApiError } from '#lib/api.ts';
+	import { api, ApiError, usd, type Balance, type Plan } from '#lib/api.ts';
+	import Alert from '#lib/components/Alert.svelte';
 	import RecoveryStub from '#lib/components/RecoveryStub.svelte';
 	import RouteBadge from '#lib/components/RouteBadge.svelte';
 	import Barcode from '#lib/components/Barcode.svelte';
@@ -13,6 +14,39 @@
 	let error = $state('');
 	let busy = $state(false);
 	let issuedCode = $state('');
+
+	// After sign-up: offer the plan, then confirm what was bought.
+	let step = $state<'form' | 'plan' | 'paid'>('form');
+	let plan = $state<Plan | null>(null);
+	let paid = $state<{ balance: Balance; ref: string } | null>(null);
+	let paying = $state(false);
+	let payError = $state('');
+
+	async function codeSaved() {
+		if (mode !== 'signup') return goto('/chat');
+		step = 'plan';
+		try {
+			plan = (await api.plans()).plans[0] ?? null;
+		} catch {
+			plan = null;
+		}
+		if (!plan) goto('/chat');
+	}
+
+	async function subscribe() {
+		if (!plan) return;
+		paying = true;
+		payError = '';
+		try {
+			const r = await api.subscribe(plan.id);
+			paid = { balance: r.balance, ref: r.payment_ref };
+			step = 'paid';
+		} catch (err) {
+			payError = err instanceof ApiError ? err.message : 'The payment did not go through. Try again.';
+		} finally {
+			paying = false;
+		}
+	}
 
 	const titles: Record<Mode, string> = {
 		login: 'Sign in',
@@ -64,8 +98,43 @@
 		</p>
 	</section>
 
-	{#if issuedCode}
-		<RecoveryStub code={issuedCode} onclose={() => goto('/chat')} />
+	{#if step === 'plan' && plan}
+		<div class="ticket offer" role="dialog" aria-labelledby="offer-h">
+			<div class="body">
+				<h2 id="offer-h">Add credit to start chatting</h2>
+				<p class="deal">
+					<span class="pay">Pay {usd(plan.price_micros, 0)}</span>
+					<span class="get">get {usd(plan.credit_micros)} of credit</span>
+				</p>
+				<p class="hint">
+					Credit is spent per token as models reply, at the prices shown next to each model. It
+					doesn't expire. Payment is simulated in this build, so no card is needed.
+				</p>
+				{#if payError}<Alert title="Payment failed"><p>{payError}</p></Alert>{/if}
+			</div>
+			<div class="row foot">
+				<button class="btn primary" disabled={paying} onclick={subscribe}>
+					{paying ? 'Paying…' : `Subscribe for ${usd(plan.price_micros, 0)}`}
+				</button>
+				<button type="button" class="link" onclick={() => goto('/chat')}>Skip for now</button>
+			</div>
+		</div>
+	{:else if step === 'paid' && plan && paid}
+		<div class="ticket offer" role="status">
+			<div class="body">
+				<p class="stamp">Paid</p>
+				<h2>You subscribed for {usd(plan.price_micros, 0)}</h2>
+				<p>
+					{usd(plan.credit_micros)} of credit was added. You have {usd(paid.balance.available_micros)} to spend.
+				</p>
+				<p class="hint">Receipt {paid.ref}</p>
+			</div>
+			<div class="row foot">
+				<button class="btn primary" onclick={() => goto('/chat')}>Start chatting</button>
+			</div>
+		</div>
+	{:else if issuedCode}
+		<RecoveryStub code={issuedCode} onclose={codeSaved} />
 	{:else}
 		<form class="ticket pass" onsubmit={submit}>
 			<div class="tabs" role="tablist">
@@ -105,7 +174,11 @@
 				{#if mode !== 'login'}
 					<p class="hint">At least 12 characters. It encrypts your data, so it can't be reset by email.</p>
 				{/if}
-				{#if error}<p class="error" role="alert">{error}</p>{/if}
+				{#if error}
+					<Alert title={mode === 'login' ? "Couldn't sign in" : mode === 'signup' ? "Couldn't create the account" : "Couldn't reset the password"}>
+						<p>{error}</p>
+					</Alert>
+				{/if}
 				<div class="row">
 					<button class="btn primary" disabled={busy}>
 						{busy ? 'Working…' : titles[mode]}
@@ -202,8 +275,46 @@
 		line-height: 1.4;
 		opacity: 0.75;
 	}
-	.error {
+	.offer {
+		max-width: 30rem;
+		overflow: hidden;
+	}
+	.offer .body {
+		display: grid;
+		gap: 0.75rem;
+		padding: 1.25rem;
+	}
+	.offer p {
 		margin: 0;
+		line-height: 1.45;
+	}
+	.deal {
+		display: grid;
+		gap: 0.125rem;
+		line-height: 1 !important;
+	}
+	.pay {
+		font-size: 1.125rem;
+		font-weight: 700;
+	}
+	.get {
+		font-size: 2.75rem;
+		font-weight: 900;
+		font-stretch: 70%;
+		letter-spacing: -0.03em;
+	}
+	.stamp {
+		justify-self: start;
+		font-weight: 900;
+		font-size: 0.875rem;
+		color: var(--line-green);
+		background: var(--ink);
+		padding: 0.125rem 0.5rem;
+		border-radius: 3px;
+	}
+	.foot {
+		padding: 0.875rem 1.25rem;
+		border-top: 2px dashed rgb(0 0 0 / 0.35);
 	}
 	.row {
 		display: flex;

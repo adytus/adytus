@@ -10,9 +10,12 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/flow/agent/react"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -24,6 +27,7 @@ import (
 	"github.com/reaganiwadha/adytus/apps/api/internal/llm"
 	"github.com/reaganiwadha/adytus/apps/api/internal/meter"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
+	"github.com/reaganiwadha/adytus/apps/api/internal/tools"
 	"github.com/reaganiwadha/adytus/apps/api/internal/vault"
 )
 
@@ -52,6 +56,8 @@ type messageBody struct {
 	Attachments []attachment  `json:"attachments,omitempty"`
 	Model       string        `json:"model,omitempty"`
 	Usage       *messageUsage `json:"usage,omitempty"`
+	// Steps are the tool calls the model made on the way to this reply.
+	Steps []tools.Step `json:"steps,omitempty"`
 	// Partial marks a reply cut short by an error or a disconnect.
 	Partial bool `json:"partial,omitempty"`
 }
@@ -436,10 +442,34 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		return errs.Validation.New("%s", err.Error())
 	}
 
-	// Hold the worst case for the first call (estimated prompt plus a
-	// full-length reply) now, so a lack of credit is a plain 402.
+	// Tools are offered when the model can call them and the user left
+	// some switched on.
+	var toolIDs []string
+	if spec.Tools && s.Tools != nil {
+		st, err := s.Store.Settings(ctx, a.UserID)
+		if err != nil {
+			return err
+		}
+		toolIDs = s.Tools.Enabled(st.Tools)
+	}
+
+	// Hold the worst case for the first call (estimated prompt, tool
+	// definitions and a full-length reply) now, so a lack of credit is a
+	// plain 402.
 	mm := meter.New(s.LLM, s.Ledger, a.UserID, spec)
-	holdAmount, err := mm.Reserve(ctx, prompt)
+	reserver := mm
+	if len(toolIDs) > 0 {
+		infos, err := s.Tools.ToolInfos(ctx, toolIDs)
+		if err != nil {
+			return err
+		}
+		withTools, err := mm.WithTools(infos)
+		if err != nil {
+			return err
+		}
+		reserver = withTools.(*meter.Model)
+	}
+	holdAmount, err := reserver.Reserve(ctx, prompt)
 	if err != nil {
 		return err
 	}
@@ -462,8 +492,12 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
+		// Tool steps arrive from the tools node, possibly in parallel.
+		var mu sync.Mutex
 		clientGone := false
 		send := func(event string, v any) error {
+			mu.Lock()
+			defer mu.Unlock()
 			if clientGone {
 				return errClientGone
 			}
@@ -477,8 +511,24 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		_ = send("start", fiber.Map{"user_message_id": prepared.userObj.ID, "message_id": prepared.replyObj.ID, "title": meta.Title, "hold_micros": holdAmount})
 
 		var content strings.Builder
+		var steps []tools.Step
+		observe := func(st tools.Step) {
+			mu.Lock()
+			if st.Done {
+				for i := range steps {
+					if steps[i].ID == st.ID {
+						steps[i] = st
+					}
+				}
+			} else {
+				steps = append(steps, st)
+			}
+			mu.Unlock()
+			_ = send("tool", st)
+		}
+
 		var streamErr error
-		sr, err := mm.Stream(ctx, prompt)
+		sr, err := s.reply(ctx, mm, prompt, toolIDs, observe)
 		if err != nil {
 			streamErr = err
 		} else {
@@ -490,6 +540,12 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 				if err != nil {
 					streamErr = err
 					break
+				}
+				if msg.ReasoningContent != "" {
+					if send("reasoning", fiber.Map{"text": msg.ReasoningContent}) != nil {
+						streamErr = errClientGone
+						break
+					}
 				}
 				if msg.Content == "" {
 					continue
@@ -515,6 +571,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		reply := messageBody{
 			Role: "assistant", Content: content.String(), Model: spec.ID, Partial: streamErr != nil,
 			Usage: &messageUsage{usage.PromptTokens, usage.CompletionTokens, usage.CostMicros},
+			Steps: steps,
 		}
 		if err := s.storeReply(ctx, chat.ID, prepared, reply); err != nil {
 			slog.Error("store messages", "err", err, "user", userID)
@@ -532,6 +589,25 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 			"balance":      balance,
 		})
 	})
+}
+
+// reply streams the model's answer. With tools it runs a ReAct loop: the
+// model may call tools any number of times (each call metered and billed)
+// before its final answer, which is what the stream carries.
+func (s *Server) reply(ctx context.Context, mm *meter.Model, prompt []*schema.Message, toolIDs []string, observe tools.Observer) (*schema.StreamReader[*schema.Message], error) {
+	if len(toolIDs) == 0 {
+		return mm.Stream(ctx, prompt)
+	}
+	agent, err := react.NewAgent(ctx, &react.AgentConfig{
+		ToolCallingModel: mm,
+		ToolsConfig:      compose.ToolsNodeConfig{Tools: s.Tools.Tools(toolIDs, observe)},
+		// Each round is a model node and a tools node, plus the final answer.
+		MaxStep: 2*s.Config.ToolMaxSteps + 1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return agent.Stream(ctx, prompt)
 }
 
 // preparedReply holds the sealed user message and the reply's object and key,

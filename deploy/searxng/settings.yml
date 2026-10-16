@@ -1,0 +1,11 @@
+# Web search backend for the search tool. Defaults, plus the JSON API the
+# backend calls and no bot limiter (only the API talks to it).
+use_default_settings: true
+server:
+  # Overridden by SEARXNG_SECRET in compose.
+  secret_key: "change-me"
+  limiter: false
+  image_proxy: false
+search:
+  safe_search: 1
+  formats: [html, json]

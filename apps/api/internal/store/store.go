@@ -225,3 +225,26 @@ func (s *Store) DeleteObject(ctx context.Context, userID, id uuid.UUID, kind str
 func (s *Store) Tx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return pgx.BeginFunc(ctx, s.DB, fn)
 }
+
+// --- settings ---
+
+type Settings struct {
+	Tools map[string]bool `json:"tools"`
+}
+
+func (s *Store) Settings(ctx context.Context, userID uuid.UUID) (Settings, error) {
+	var st Settings
+	err := s.DB.QueryRow(ctx, `SELECT settings FROM users WHERE id = $1`, userID).Scan(&st)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return st, errs.NotFound.New("user not found")
+	}
+	if st.Tools == nil {
+		st.Tools = map[string]bool{}
+	}
+	return st, err
+}
+
+func (s *Store) SetSettings(ctx context.Context, userID uuid.UUID, st Settings) error {
+	_, err := s.DB.Exec(ctx, `UPDATE users SET settings = $2 WHERE id = $1`, userID, st)
+	return err
+}

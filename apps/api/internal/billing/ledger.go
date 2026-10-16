@@ -32,6 +32,9 @@ type Balance struct {
 	AvailableMicros  int64 `json:"available_micros"`
 	SpentTodayMicros int64 `json:"spent_today_micros"`
 	DailyCapMicros   int64 `json:"daily_cap_micros"`
+	// Lifetime totals: credit bought and credit used.
+	PurchasedMicros int64 `json:"purchased_micros"`
+	UsedMicros      int64 `json:"used_micros"`
 }
 
 type Entry struct {
@@ -62,8 +65,10 @@ func (l *Ledger) balance(ctx context.Context, q querier, userID uuid.UUID) (Bala
 			COALESCE((SELECT SUM(delta_micros) FROM credit_ledger WHERE user_id = $1), 0),
 			COALESCE((SELECT SUM(amount_micros) FROM credit_holds WHERE user_id = $1 AND expires_at > now()), 0),
 			COALESCE((SELECT -SUM(delta_micros) FROM credit_ledger
-				WHERE user_id = $1 AND reason = 'usage' AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), 0)`,
-		userID).Scan(&b.CreditMicros, &b.HeldMicros, &b.SpentTodayMicros)
+				WHERE user_id = $1 AND reason = 'usage' AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), 0),
+			COALESCE((SELECT SUM(delta_micros) FROM credit_ledger WHERE user_id = $1 AND reason = 'subscription'), 0),
+			COALESCE((SELECT -SUM(delta_micros) FROM credit_ledger WHERE user_id = $1 AND reason = 'usage'), 0)`,
+		userID).Scan(&b.CreditMicros, &b.HeldMicros, &b.SpentTodayMicros, &b.PurchasedMicros, &b.UsedMicros)
 	b.AvailableMicros = b.CreditMicros - b.HeldMicros
 	return b, err
 }

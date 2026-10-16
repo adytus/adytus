@@ -18,7 +18,10 @@ import (
 func aadContent(id uuid.UUID) []byte { return []byte("obj:" + id.String()) }
 func aadDEK(id uuid.UUID) []byte     { return []byte("obj:" + id.String() + ":dek") }
 func aadServer(id uuid.UUID) []byte  { return []byte("obj:" + id.String() + ":server") }
-func AADUserMK(id uuid.UUID) []byte  { return []byte("user:" + id.String() + ":mk") }
+func aadPart(id uuid.UUID, part string) []byte {
+	return []byte("obj:" + id.String() + ":part:" + part)
+}
+func AADUserMK(id uuid.UUID) []byte { return []byte("user:" + id.String() + ":mk") }
 func AADRecovery(id uuid.UUID) []byte {
 	return []byte("user:" + id.String() + ":recovery")
 }
@@ -76,6 +79,17 @@ func SealBytes(dek []byte, id uuid.UUID, data []byte) ([]byte, error) {
 
 func OpenBytes(dek []byte, id uuid.UUID, sealed []byte) ([]byte, error) {
 	return crypto.Open(dek, sealed, aadContent(id))
+}
+
+// SealPart and OpenPart encrypt a derived blob of an object (such as an
+// image thumbnail) with the object's DEK, bound to the part's name so it
+// can't be swapped with the object's content.
+func SealPart(dek []byte, id uuid.UUID, part string, data []byte) ([]byte, error) {
+	return crypto.Seal(dek, data, aadPart(id, part))
+}
+
+func OpenPart(dek []byte, id uuid.UUID, part string, sealed []byte) ([]byte, error) {
+	return crypto.Open(dek, sealed, aadPart(id, part))
 }
 
 // Seal JSON-encodes v and encrypts it with the object's DEK.

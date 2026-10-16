@@ -42,6 +42,15 @@ type Config struct {
 	S3SecretKey    string `env:"S3_SECRET_KEY" envDefault:"adytus-secret"`
 	MaxUploadBytes int    `env:"MAX_UPLOAD_BYTES" envDefault:"26214400"`
 
+	// Tools. An empty SEARXNG_URL leaves web search out; a missing wasm file
+	// leaves the Python sandbox out.
+	SearxngURL     string        `env:"SEARXNG_URL" envDefault:"http://127.0.0.1:8888"`
+	PythonWasm     string        `env:"PYTHON_WASM" envDefault:"third_party/python/python-3.12.0.wasm"`
+	PythonTimeout  time.Duration `env:"PYTHON_TIMEOUT" envDefault:"10s"`
+	PythonMemoryMB int           `env:"PYTHON_MEMORY_MB" envDefault:"256"`
+	PythonParallel int           `env:"PYTHON_PARALLEL" envDefault:"2"`
+	ToolMaxSteps   int           `env:"TOOL_MAX_STEPS" envDefault:"8"`
+
 	// KDF is not configurable from the environment; tests lower it.
 	KDF crypto.KDFParams `env:"-"`
 }

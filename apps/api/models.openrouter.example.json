@@ -7,7 +7,14 @@
       "prompt_usd_per_mtok": 1,
       "completion_usd_per_mtok": 4,
       "context_tokens": 128000,
-      "max_output_tokens": 4096
+      "max_output_tokens": 4096,
+      "vision": false,
+      "tools": true,
+      "icon": {
+        "code": "M1",
+        "color": "#2fbf71",
+        "shape": "square"
+      }
     }
   ]
 }

@@ -31,6 +31,8 @@ type fileMeta struct {
 	// chat's model has vision.
 	Text  bool `json:"text"`
 	Image bool `json:"image"`
+	// Thumb is set when an encrypted preview is stored beside the file.
+	Thumb bool `json:"thumb"`
 }
 
 type fileView struct {
@@ -109,11 +111,30 @@ func (s *Server) uploadFile(c fiber.Ctx) error {
 		return errs.Upstream.Wrap(err, "storage unavailable")
 	}
 	o.S3Key = null.StringFrom(key)
+
+	// Image previews are made now, while the plaintext is in hand, and
+	// sealed with the file's own key.
+	if meta.Image {
+		if thumb, err := imageprep.Thumbnail(data); err == nil {
+			sealedThumb, err := vault.SealPart(dek, o.ID, "thumb", thumb)
+			if err == nil {
+				err = s.Blobs.Put(c.Context(), thumbKey(key), sealedThumb)
+			}
+			if err != nil {
+				slog.Warn("store thumbnail", "err", err)
+			} else {
+				meta.Thumb = true
+			}
+		}
+	}
 	if o.Ciphertext, err = vault.Seal(dek, o.ID, meta); err != nil {
 		return err
 	}
 	if err := s.Store.InsertObject(c.Context(), o); err != nil {
 		_ = s.Blobs.Delete(context.Background(), key)
+		if meta.Thumb {
+			_ = s.Blobs.Delete(context.Background(), thumbKey(key))
+		}
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"file": viewFile(o, meta)})
@@ -159,6 +180,71 @@ func (s *Server) downloadFile(c fiber.Ctx) error {
 	return c.Send(data)
 }
 
+// viewImage serves an image file re-encoded as JPEG for inline display.
+// Re-encoding means only pixels reach the page, never the uploaded bytes.
+func (s *Server) viewImage(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	meta, data, err := s.readFile(c.Context(), mustAuth(c), id)
+	if err != nil {
+		return err
+	}
+	if !meta.Image {
+		return errs.NotFound.New("%s is not an image", meta.Name)
+	}
+	jpg, err := imageprep.View(data)
+	if err != nil {
+		return errs.Validation.New("%s: %s", meta.Name, err.Error())
+	}
+	c.Set("Content-Type", "image/jpeg")
+	c.Set("X-Content-Type-Options", "nosniff")
+	c.Set("Cache-Control", "private, max-age=3600")
+	return c.Send(jpg)
+}
+
+func thumbKey(key string) string { return key + ".thumb" }
+
+// thumbnail serves an image file's decrypted preview. Like downloads, it is
+// decrypted per request with the session's key and never cached shared.
+func (s *Server) thumbnail(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	a := mustAuth(c)
+	o, err := s.Store.GetObject(c.Context(), a.UserID, id, store.KindFile)
+	if err != nil {
+		return err
+	}
+	dek, err := vault.DEK(a.MK, o)
+	if err != nil {
+		return err
+	}
+	defer crypto.Zero(dek)
+	var meta fileMeta
+	if err := vault.OpenWithDEK(dek, o, &meta); err != nil {
+		return err
+	}
+	if !meta.Thumb {
+		return errs.NotFound.New("no preview for this file")
+	}
+	sealed, err := s.Blobs.Get(c.Context(), thumbKey(o.S3Key.ValueOrZero()))
+	if err != nil {
+		return errs.Upstream.Wrap(err, "storage unavailable")
+	}
+	jpg, err := vault.OpenPart(dek, o.ID, "thumb", sealed)
+	if err != nil {
+		return err
+	}
+	// Our own re-encoded JPEG, so it is safe to render inline.
+	c.Set("Content-Type", "image/jpeg")
+	c.Set("X-Content-Type-Options", "nosniff")
+	c.Set("Cache-Control", "private, max-age=3600")
+	return c.Send(jpg)
+}
+
 func (s *Server) deleteFile(c fiber.Ctx) error {
 	id, err := paramID(c)
 	if err != nil {
@@ -169,8 +255,10 @@ func (s *Server) deleteFile(c fiber.Ctx) error {
 		return err
 	}
 	for _, k := range keys {
-		if err := s.Blobs.Delete(c.Context(), k); err != nil {
-			slog.Warn("delete blob", "key", k, "err", err)
+		for _, k := range []string{k, thumbKey(k)} {
+			if err := s.Blobs.Delete(c.Context(), k); err != nil {
+				slog.Warn("delete blob", "key", k, "err", err)
+			}
 		}
 	}
 	return c.SendStatus(fiber.StatusNoContent)

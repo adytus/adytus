@@ -16,6 +16,7 @@ import (
 	"github.com/reaganiwadha/adytus/apps/api/internal/llm"
 	"github.com/reaganiwadha/adytus/apps/api/internal/session"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
+	"github.com/reaganiwadha/adytus/apps/api/internal/tools"
 )
 
 type Deps struct {
@@ -27,6 +28,7 @@ type Deps struct {
 	Payments billing.Gateway
 	Sessions *session.Store
 	Blobs    blob.Store
+	Tools    *tools.Registry
 }
 
 type Server struct {
@@ -98,9 +100,14 @@ func (s *Server) routes() {
 		},
 	}), s.sendMessage)
 
+	me.Get("/settings", s.getSettings)
+	me.Put("/settings", s.putSettings)
+
 	me.Get("/files", s.listFiles)
 	me.Post("/files", s.uploadFile)
 	me.Get("/files/:id/content", s.downloadFile)
+	me.Get("/files/:id/thumbnail", s.thumbnail)
+	me.Get("/files/:id/view", s.viewImage)
 	me.Delete("/files/:id", s.deleteFile)
 	me.Put("/files/:id/offline", s.setFileOffline)
 }

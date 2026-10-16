@@ -4,6 +4,7 @@
 	import Barcode from '#lib/components/Barcode.svelte';
 	import RouteBadge from '#lib/components/RouteBadge.svelte';
 	import RecoveryStub from '#lib/components/RecoveryStub.svelte';
+	import Alert from '#lib/components/Alert.svelte';
 
 	let plans = $state<Plan[]>([]);
 	let entries = $state<LedgerEntry[]>([]);
@@ -33,7 +34,7 @@
 		try {
 			const r = await api.subscribe(p.id);
 			app.balance = r.balance;
-			bought = `Paid ${usd(p.price_micros)}. ${usd(p.credit_micros)} of credit added (receipt ${r.payment_ref}).`;
+			bought = `You subscribed for ${usd(p.price_micros, 0)}. ${usd(p.credit_micros)} of credit was added (receipt ${r.payment_ref}).`;
 			await loadLedger();
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Payment failed. Try again.';
@@ -58,6 +59,8 @@
 	}
 
 	const lines = ['blue', 'purple', 'red', 'yellow'] as const;
+	const b = $derived(app.balance);
+	const usedPct = $derived(b && b.purchased_micros > 0 ? Math.min(100, (b.used_micros / b.purchased_micros) * 100) : 0);
 	const fmtDate = (s: string) =>
 		new Date(s).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 </script>
@@ -68,11 +71,28 @@
 		<p class="muted">Signed in as {app.user?.email}</p>
 	</header>
 
+	<section aria-labelledby="usage-h">
+		<h2 id="usage-h">Usage</h2>
+		{#if b && b.purchased_micros > 0}
+			<p class="used"><strong>{usd(b.used_micros)}</strong> used of {usd(b.purchased_micros)}</p>
+			<div class="meter" role="img" aria-label="{Math.round(usedPct)}% of your credit used">
+				<span style:width="{usedPct}%"></span>
+			</div>
+			<dl class="facts">
+				<div><dt>Left to spend</dt><dd>{usd(b.available_micros)}</dd></div>
+				{#if b.held_micros > 0}<div><dt>Held for a reply</dt><dd>{usd(b.held_micros)}</dd></div>{/if}
+				<div><dt>Spent today</dt><dd>{usd(b.spent_today_micros)} of {usd(b.daily_cap_micros)} daily limit</dd></div>
+			</dl>
+		{:else}
+			<p class="muted">You haven't added credit yet. Subscribe below to start chatting.</p>
+		{/if}
+	</section>
+
 	<section aria-labelledby="plans-h">
 		<h2 id="plans-h">Add credit</h2>
 		<p class="muted">
-			Credit pays for model usage at the listed per-token prices.
-			Payments are simulated in this build.
+			Credit is spent per token as models reply and doesn't expire. Payment is simulated in this
+			build, so no card is needed.
 		</p>
 		<div class="plans">
 			{#each plans as p, i (p.id)}
@@ -81,25 +101,21 @@
 						<RouteBadge line={lines[i % lines.length]} size={2.25}>{p.name[0]}</RouteBadge>
 						<span class="micro">Single fare · no expiry</span>
 					</div>
-					<p class="credit">{usd(p.credit_micros)}</p>
-					<p class="micro">credit for {usd(p.price_micros)}</p>
+					<p class="pay">Pay {usd(p.price_micros, 0)}</p>
+					<p class="credit">get {usd(p.credit_micros)}</p>
+					<p class="of">of credit</p>
 					<div class="foot">
 						<Barcode value={p.id.toUpperCase()} height={18} />
 						<button class="btn primary" disabled={buying !== ''} onclick={() => subscribe(p)}>
-							{buying === p.id ? 'Paying…' : `Buy for ${usd(p.price_micros)}`}
+							{buying === p.id ? 'Paying…' : `Subscribe for ${usd(p.price_micros, 0)}`}
 						</button>
 					</div>
 				</article>
 			{/each}
 		</div>
-		{#if bought}<p class="ok" role="status">{bought}</p>{/if}
-		{#if error}<p class="error" role="alert">{error}</p>{/if}
-		{#if app.balance}
-			<p class="muted">
-				Daily spending cap: {usd(app.balance.daily_cap_micros)}. Today you've spent
-				{usd(app.balance.spent_today_micros)}. The cap resets at midnight UTC.
-			</p>
-		{/if}
+		{#if bought}<Alert tone="ok" title="Payment complete" ondismiss={() => (bought = '')}><p>{bought}</p></Alert>{/if}
+		{#if error}<Alert title="Payment failed" ondismiss={() => (error = '')}><p>{error}</p></Alert>{/if}
+		<p class="muted">The daily spending limit resets at midnight UTC.</p>
 	</section>
 
 	<section aria-labelledby="ledger-h">
@@ -158,7 +174,7 @@
 					New password
 					<input type="password" autocomplete="new-password" minlength="12" required bind:value={next} />
 				</label>
-				{#if pwError}<p class="error" role="alert">{pwError}</p>{/if}
+				{#if pwError}<Alert title="Password not changed"><p>{pwError}</p></Alert>{/if}
 				<button class="btn primary" disabled={pwBusy}>{pwBusy ? 'Re-keying…' : 'Change password'}</button>
 			</form>
 		{/if}
@@ -210,13 +226,62 @@
 		justify-content: space-between;
 		align-items: center;
 	}
+	.pay {
+		margin: 0.75rem 0 0;
+		font-weight: 700;
+		font-size: 1.125rem;
+	}
 	.credit {
-		margin: 0.75rem 0 0.25rem;
-		font-size: 4.5rem;
+		margin: 0.125rem 0 0;
+		font-size: 3.25rem;
 		font-weight: 900;
 		font-stretch: 65%;
 		letter-spacing: -0.03em;
-		line-height: 0.85;
+		line-height: 0.9;
+	}
+	.of {
+		margin: 0;
+		font-weight: 600;
+		font-size: 0.875rem;
+	}
+	.used {
+		margin: 0 0 0.5rem;
+		font-size: 1.125rem;
+		color: #b5b2ab;
+	}
+	.used strong {
+		font-size: 2.25rem;
+		font-weight: 900;
+		font-stretch: 75%;
+		color: var(--paper);
+		font-variant-numeric: tabular-nums;
+	}
+	.meter {
+		height: 8px;
+		border-radius: 4px;
+		background: #1f1f1f;
+		overflow: hidden;
+		max-width: 32rem;
+	}
+	.meter span {
+		display: block;
+		height: 100%;
+		background: var(--line-yellow);
+	}
+	.facts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem 2rem;
+		margin: 1rem 0 0;
+	}
+	.facts dt {
+		font-size: 0.8125rem;
+		color: var(--muted);
+	}
+	.facts dd {
+		margin: 0.125rem 0 0;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
 	}
 	.foot {
 		display: flex;
@@ -226,10 +291,6 @@
 		margin-top: 1rem;
 		padding: 0.75rem 0;
 		border-top: 2px dashed rgb(0 0 0 / 0.35);
-	}
-	.ok {
-		color: var(--line-green);
-		font-weight: 600;
 	}
 	.table-wrap {
 		overflow-x: auto;

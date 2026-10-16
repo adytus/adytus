@@ -33,9 +33,21 @@ func Detect(data []byte) bool {
 	return err == nil && cfg.Width > 0 && cfg.Height > 0
 }
 
+// ViewSide bounds images shown full-size in the browser.
+const ViewSide = 2048
+
+// View re-encodes an image for display at up to ViewSide.
+func View(data []byte) ([]byte, error) {
+	return prepare(data, ViewSide, 88)
+}
+
 // Prepare decodes, downsizes to MaxSide, flattens transparency onto white
 // and re-encodes as JPEG.
 func Prepare(data []byte) ([]byte, error) {
+	return prepare(data, MaxSide, 85)
+}
+
+func prepare(data []byte, side, quality int) ([]byte, error) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, ErrNotImage
@@ -49,11 +61,11 @@ func Prepare(data []byte) ([]byte, error) {
 	}
 
 	w, h := cfg.Width, cfg.Height
-	if w > MaxSide || h > MaxSide {
+	if w > side || h > side {
 		if w >= h {
-			w, h = MaxSide, max(1, h*MaxSide/w)
+			w, h = side, max(1, h*side/w)
 		} else {
-			w, h = max(1, w*MaxSide/h), MaxSide
+			w, h = max(1, w*side/h), side
 		}
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -61,7 +73,7 @@ func Prepare(data []byte) ([]byte, error) {
 	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
 
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85}); err != nil {
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: quality}); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -74,4 +86,12 @@ func DataURL(data []byte) (string, error) {
 		return "", err
 	}
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(out), nil
+}
+
+// ThumbSide bounds a thumbnail's longer edge.
+const ThumbSide = 320
+
+// Thumbnail returns a small JPEG preview of an image.
+func Thumbnail(data []byte) ([]byte, error) {
+	return prepare(data, ThumbSide, 80)
 }

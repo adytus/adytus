@@ -8,13 +8,18 @@ export type Model = {
 	context_tokens: number;
 	max_output_tokens: number;
 	vision: boolean;
+	tools: boolean;
+	icon: ModelIcon;
 };
+export type ModelIcon = { code: string; color: string; shape: 'circle' | 'square' | 'diamond' | 'hexagon' };
 export type Balance = {
 	credit_micros: number;
 	held_micros: number;
 	available_micros: number;
 	spent_today_micros: number;
 	daily_cap_micros: number;
+	purchased_micros: number;
+	used_micros: number;
 };
 export type LedgerEntry = {
 	id: number;
@@ -34,6 +39,15 @@ export type Chat = {
 	updated_at: string;
 };
 export type Usage = { prompt_tokens: number; completion_tokens: number; cost_micros: number };
+export type ToolStep = { id: string; tool: string; input: string; output?: string; done: boolean; ms?: number };
+export type Tool = {
+	id: string;
+	name: string;
+	description: string;
+	leaves_server: boolean;
+	default_on: boolean;
+	enabled: boolean;
+};
 export type Attachment = { id: string; name: string; image?: boolean };
 export type Message = {
 	id: string;
@@ -43,6 +57,7 @@ export type Message = {
 	model?: string;
 	usage?: Usage;
 	partial?: boolean;
+	steps?: ToolStep[];
 	created_at: string;
 };
 export type FileItem = {
@@ -52,6 +67,7 @@ export type FileItem = {
 	size: number;
 	text: boolean;
 	image: boolean;
+	thumb: boolean;
 	offline: boolean;
 	created_at: string;
 };
@@ -144,12 +160,19 @@ export const api = {
 	deleteFile: (id: string) => call<void>('DELETE', `/api/files/${id}`),
 	setFileOffline: (id: string, enabled: boolean) =>
 		call<{ file: FileItem }>('PUT', `/api/files/${id}/offline`, { enabled }),
-	fileURL: (id: string) => `/api/files/${id}/content`
+	fileURL: (id: string) => `/api/files/${id}/content`,
+	thumbURL: (id: string) => `/api/files/${id}/thumbnail`,
+	viewURL: (id: string) => `/api/files/${id}/view`,
+
+	settings: () => get<{ tools: Tool[] }>('/api/settings'),
+	setTool: (id: string, on: boolean) => call<{ tools: Tool[] }>('PUT', '/api/settings', { tools: { [id]: on } })
 };
 
 export type StreamHandlers = {
 	start?: (d: { user_message_id: string; message_id: string; title: string; hold_micros: number }) => void;
 	delta?: (d: { text: string }) => void;
+	reasoning?: (d: { text: string }) => void;
+	tool?: (d: ToolStep) => void;
 	done?: (d: { message: Message; user_message: Message; balance: Balance }) => void;
 	error?: (d: { error: string; message: string }) => void;
 };

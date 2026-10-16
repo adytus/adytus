@@ -203,6 +203,7 @@ func (c *collected) add(msg *schema.Message) {
 	if msg == nil {
 		return
 	}
+	c.output.WriteString(msg.ReasoningContent)
 	c.output.WriteString(msg.Content)
 	for _, tc := range msg.ToolCalls {
 		c.output.WriteString(tc.Function.Name)

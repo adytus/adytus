@@ -4,6 +4,8 @@
 	import { api, ApiError } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
 	import FareCard from '#lib/components/FareCard.svelte';
+	import ModelIcon from '#lib/components/ModelIcon.svelte';
+	import Alert from '#lib/components/Alert.svelte';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -16,7 +18,7 @@
 			() => (ready = true),
 			(err) => {
 				if (err instanceof ApiError && err.status === 401) goto('/login');
-				else failure = err instanceof ApiError ? err.message : 'The API is not reachable.';
+				else failure = err instanceof ApiError ? err.message : 'The API did not answer.';
 			}
 		);
 	});
@@ -34,15 +36,25 @@
 	}
 
 	const activeChat = $derived(page.params.id);
+	const here = (path: string) => (page.url.pathname.startsWith(path) ? 'page' : undefined);
+
+	// Each section keeps its own line color, as on a metro map.
+	const sections = [
+		{ href: '/files', label: 'Files', line: 'var(--line-yellow)' },
+		{ href: '/settings', label: 'Settings', line: 'var(--line-green)' },
+		{ href: '/account', label: 'Account and credit', line: 'var(--line-red)' }
+	];
 </script>
 
 {#if failure}
 	<div class="center">
-		<p class="error">{failure}</p>
-		<button class="btn" onclick={() => location.reload()}>Retry</button>
+		<Alert title="Adytus can't reach its server">
+			<p>{failure} Check that the API is running, then try again.</p>
+			{#snippet action()}<button class="btn" onclick={() => location.reload()}>Try again</button>{/snippet}
+		</Alert>
 	</div>
 {:else if !ready}
-	<div class="center"><p class="micro">Validating ticket…</p></div>
+	<div class="center"><p class="loading">Loading your account…</p></div>
 {:else}
 	<div class="shell">
 		<header class="topbar">
@@ -56,6 +68,7 @@
 			<a class="wordmark desktop" href="/chat">ADYTUS</a>
 			<a class="btn primary new" href="/chat">New chat</a>
 
+			<h2 class="group">Chats</h2>
 			<div class="chats">
 				{#each app.chats as c (c.id)}
 					<a
@@ -64,20 +77,25 @@
 						class:active={activeChat === c.id}
 						aria-current={activeChat === c.id ? 'page' : undefined}
 					>
+						<ModelIcon icon={app.model(c.model)?.icon} size={1.125} />
 						<span class="title">{c.title || 'Untitled chat'}</span>
-						{#if c.offline}<span class="pip" title="Offline processing enabled"></span>{/if}
 					</a>
 				{:else}
-					<p class="empty">Your chats will appear here.</p>
+					<p class="empty">Chats you start appear here.</p>
 				{/each}
 			</div>
 
-			<div class="links">
-				<a href="/files" aria-current={page.url.pathname === '/files' ? 'page' : undefined}>Files</a>
-				<a href="/account" aria-current={page.url.pathname === '/account' ? 'page' : undefined}>Account</a>
-			</div>
+			<ul class="sections">
+				{#each sections as s (s.href)}
+					<li>
+						<a href={s.href} aria-current={here(s.href)} style:--line={s.line}>
+							<span class="stop" aria-hidden="true"></span>{s.label}
+						</a>
+					</li>
+				{/each}
+			</ul>
 
-			<FareCard balance={app.balance} userID={app.user?.id ?? ''} />
+			<FareCard balance={app.balance} />
 
 			<div class="me">
 				<span title={app.user?.email}>{app.user?.email}</span>
@@ -96,12 +114,17 @@
 		min-height: 100dvh;
 		display: grid;
 		place-content: center;
-		gap: 1rem;
-		justify-items: center;
+		padding: 1rem;
+	}
+	.center > :global(*) {
+		max-width: 32rem;
+	}
+	.loading {
+		color: var(--muted);
 	}
 	.shell {
 		display: grid;
-		grid-template-columns: 17.5rem minmax(0, 1fr);
+		grid-template-columns: 16.5rem minmax(0, 1fr);
 		height: 100dvh;
 	}
 	.topbar {
@@ -115,18 +138,26 @@
 		text-decoration: none;
 		color: var(--stock);
 		line-height: 1;
+		padding: 0 0.25rem;
 	}
 	.rail {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
-		padding: 1.25rem 1rem;
+		gap: 0.875rem;
+		padding: 1.25rem 0.875rem 1rem;
 		border-right: 1px solid var(--rule);
 		min-height: 0;
 	}
 	.new {
 		text-align: center;
 		text-decoration: none;
+	}
+	.group {
+		margin: 0.25rem 0 -0.5rem;
+		padding: 0 0.5rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--muted);
 	}
 	.chats {
 		flex: 1;
@@ -139,7 +170,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		padding: 0.5rem;
+		padding: 0.4375rem 0.5rem;
 		border-radius: 4px;
 		text-decoration: none;
 		font-size: 0.9375rem;
@@ -159,30 +190,48 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
-	.pip {
-		width: 0.5rem;
-		height: 0.5rem;
-		border-radius: 50%;
-		background: var(--line-yellow);
-		flex: none;
-	}
 	.empty {
 		color: var(--muted);
 		font-size: 0.875rem;
+		margin: 0.25rem 0;
 		padding: 0 0.5rem;
 	}
-	.links {
-		display: flex;
-		gap: 1.25rem;
-		font-weight: 700;
+	.sections {
+		list-style: none;
+		margin: 0;
+		padding: 0.625rem 0 0;
+		border-top: 1px solid var(--rule);
+		display: grid;
+		gap: 2px;
 	}
-	.links a {
+	.sections a {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		padding: 0.4375rem 0.5rem;
+		border-radius: 4px;
 		text-decoration: none;
+		font-weight: 600;
+		font-size: 0.9375rem;
 		color: var(--muted);
 	}
-	.links a[aria-current='page'],
-	.links a:hover {
+	.sections a:hover {
 		color: var(--paper);
+		background: #111;
+	}
+	.sections a[aria-current='page'] {
+		color: var(--paper);
+		background: #161616;
+	}
+	.stop {
+		width: 0.75rem;
+		height: 0.75rem;
+		border-radius: 50%;
+		border: 3px solid var(--line);
+		flex: none;
+	}
+	[aria-current='page'] .stop {
+		background: var(--line);
 	}
 	.me {
 		display: flex;
@@ -190,6 +239,7 @@
 		gap: 0.5rem;
 		font-size: 0.8125rem;
 		color: var(--muted);
+		padding: 0 0.25rem;
 	}
 	.me span {
 		overflow: hidden;

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +41,7 @@ import (
 	"github.com/reaganiwadha/adytus/apps/api/internal/llm"
 	"github.com/reaganiwadha/adytus/apps/api/internal/session"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
+	"github.com/reaganiwadha/adytus/apps/api/internal/tools"
 	"github.com/reaganiwadha/adytus/apps/api/internal/vault"
 )
 
@@ -49,33 +51,69 @@ type fakeLLM struct {
 	mu       sync.Mutex
 	lastMsgs []*schema.Message
 	lastOpts *model.Options
-	fail     bool
-	noUsage  bool
+	// lastTools are the tool names offered on the last call.
+	lastTools []string
+	fail      bool
+	noUsage   bool
 }
 
 func (f *fakeLLM) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, errors.New("not used")
 }
 
-func (f *fakeLLM) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) { return f, nil }
+func (f *fakeLLM) WithTools(infos []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	b := &boundLLM{fakeLLM: f}
+	for _, i := range infos {
+		b.tools = append(b.tools, i.Name)
+	}
+	return b, nil
+}
+
+// boundLLM is the fake with tools offered. "calc <expr>" makes it call the
+// calculator; after a tool result it answers with that result.
+type boundLLM struct {
+	*fakeLLM
+	tools []string
+}
+
+func (b *boundLLM) Stream(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return b.stream(msgs, opts, b.tools)
+}
 
 func (f *fakeLLM) Stream(_ context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return f.stream(msgs, opts, nil)
+}
+
+func (f *fakeLLM) stream(msgs []*schema.Message, opts []model.Option, offered []string) (*schema.StreamReader[*schema.Message], error) {
 	f.mu.Lock()
-	f.lastMsgs, f.lastOpts = msgs, model.GetCommonOptions(nil, opts...)
+	f.lastMsgs, f.lastOpts, f.lastTools = msgs, model.GetCommonOptions(nil, opts...), offered
 	fail, noUsage := f.fail, f.noUsage
 	f.mu.Unlock()
 	if fail {
 		return nil, io.ErrUnexpectedEOF
 	}
-	reply := "echo: " + text(msgs[len(msgs)-1])
+	usage := &schema.Message{Role: schema.Assistant, ResponseMeta: &schema.ResponseMeta{
+		Usage: &schema.TokenUsage{PromptTokens: 1000, CompletionTokens: 100},
+	}}
+	lastMsg := msgs[len(msgs)-1]
+	if expr, ok := strings.CutPrefix(text(lastMsg), "calc "); ok && slices.Contains(offered, "calculator") {
+		args, _ := json.Marshal(map[string]string{"expression": expr})
+		idx := 0
+		call := schema.AssistantMessage("", []schema.ToolCall{{Index: &idx, ID: "call_1", Type: "function",
+			Function: schema.FunctionCall{Name: "calculator", Arguments: string(args)}}})
+		call.ReasoningContent = "need the calculator"
+		return schema.StreamReaderFromArray([]*schema.Message{call, usage}), nil
+	}
+	reply := "echo: " + text(lastMsg)
+	if lastMsg.Role == schema.Tool {
+		reply = "answer: " + lastMsg.Content
+	}
 	chunks := []*schema.Message{
 		schema.AssistantMessage(reply[:len(reply)/2], nil),
 		schema.AssistantMessage(reply[len(reply)/2:], nil),
 	}
 	if !noUsage {
-		chunks = append(chunks, &schema.Message{Role: schema.Assistant, ResponseMeta: &schema.ResponseMeta{
-			Usage: &schema.TokenUsage{PromptTokens: 1000, CompletionTokens: 100},
-		}})
+		chunks = append(chunks, usage)
 	}
 	return schema.StreamReaderFromArray(chunks), nil
 }
@@ -96,6 +134,7 @@ var testModels = []llm.Model{
 	{ID: "cheap", Upstream: "up-cheap", PromptUSDPerMTok: 1, CompletionUSDPerMTok: 2, ContextTokens: 8000, MaxOutputTokens: 500},
 	// $100 per million output tokens: a 500-token hold costs $0.05.
 	{ID: "pricey", Upstream: "up-pricey", PromptUSDPerMTok: 50, CompletionUSDPerMTok: 100, ContextTokens: 8000, MaxOutputTokens: 500},
+	{ID: "hands", Upstream: "up-hands", PromptUSDPerMTok: 1, CompletionUSDPerMTok: 2, ContextTokens: 8000, MaxOutputTokens: 500, Tools: true},
 	{ID: "eyes", Upstream: "up-eyes", PromptUSDPerMTok: 1, CompletionUSDPerMTok: 2, ContextTokens: 8000, MaxOutputTokens: 500, Vision: true, ImageTokens: 1500},
 }
 
@@ -139,6 +178,11 @@ func newEnv(t *testing.T) *env {
 		SessionTTL:     time.Hour,
 		MaxUploadBytes: 1 << 20,
 		KDF:            crypto.KDFParams{Time: 1, MemoryKiB: 1024, Threads: 1},
+		ToolMaxSteps:   4,
+	}
+	registry, err := tools.NewRegistry(nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	catalog, err := llm.NewCatalog(testModels)
 	if err != nil {
@@ -155,6 +199,7 @@ func newEnv(t *testing.T) *env {
 		Payments: billing.MockGateway{},
 		Sessions: session.NewStore(time.Hour, time.Hour),
 		Blobs:    blobs,
+		Tools:    registry,
 	})
 	return &env{t: t, srv: srv, llm: fake, blobs: blobs, pool: pool}
 }
@@ -589,6 +634,126 @@ func TestImageAttachmentsNeedVision(t *testing.T) {
 	if images != 1 {
 		t.Fatalf("history images = %d", images)
 	}
+}
+
+func TestToolSettingsAndToolLoop(t *testing.T) {
+	e := newEnv(t)
+	e.signup("t@example.com")
+	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+
+	st := e.must(200, "GET", "/api/settings", nil)["tools"].([]any)
+	calc := st[0].(map[string]any)
+	if len(st) != 1 || calc["id"] != "calculator" || calc["enabled"] != true {
+		t.Fatalf("settings: %v", st)
+	}
+	if r, _ := e.do("PUT", "/api/settings", map[string]any{"tools": map[string]bool{"rm_rf": true}}); r.StatusCode != 400 {
+		t.Fatalf("unknown tool accepted: %d", r.StatusCode)
+	}
+
+	chatID := e.must(201, "POST", "/api/chats", map[string]string{"model": "hands"})["chat"].(map[string]any)["id"].(string)
+	before := e.available()
+	status, ev := e.sendMessage(chatID, "calc 6*7")
+	if status != 200 || last(ev).Name != "done" {
+		t.Fatalf("send: %d %v", status, ev)
+	}
+	var toolEvents, reasoning int
+	for _, x := range ev {
+		switch x.Name {
+		case "tool":
+			toolEvents++
+		case "reasoning":
+			reasoning++
+		}
+	}
+	if toolEvents != 2 {
+		t.Fatalf("want a started and a finished tool event, got %d", toolEvents)
+	}
+	msg := last(ev).Data["message"].(map[string]any)
+	if msg["content"] != "answer: 42" {
+		t.Fatalf("reply: %v", msg["content"])
+	}
+	steps := msg["steps"].([]any)
+	step := steps[0].(map[string]any)
+	if len(steps) != 1 || step["tool"] != "calculator" || step["output"] != "42" || step["done"] != true {
+		t.Fatalf("steps: %v", steps)
+	}
+	// Both model calls are billed: 2 x (1000 prompt + 100 completion).
+	usage := msg["usage"].(map[string]any)
+	if num(usage["prompt_tokens"]) != 2000 || before-e.available() != num(usage["cost_micros"]) {
+		t.Fatalf("usage %v, charged %d", usage, before-e.available())
+	}
+
+	// Steps come back with the chat.
+	msgs := e.must(200, "GET", "/api/chats/"+chatID, nil)["messages"].([]any)
+	if _, ok := msgs[1].(map[string]any)["steps"]; !ok {
+		t.Fatalf("steps not stored: %v", msgs[1])
+	}
+
+	// Switched off, the tool is no longer offered.
+	e.must(200, "PUT", "/api/settings", map[string]any{"tools": map[string]bool{"calculator": false}})
+	e.sendMessage(chatID, "calc 1+1")
+	if len(e.llm.lastTools) != 0 {
+		t.Fatalf("tools offered after opting out: %v", e.llm.lastTools)
+	}
+}
+
+func TestImageThumbnails(t *testing.T) {
+	e := newEnv(t)
+	e.signup("p@example.com")
+
+	var png bytes.Buffer
+	if err := pngenc.Encode(&png, image.NewRGBA(image.Rect(0, 0, 1600, 800))); err != nil {
+		t.Fatal(err)
+	}
+	file := e.upload("wide.png", png.Bytes())
+	if file["thumb"] != true {
+		t.Fatalf("no thumbnail: %v", file)
+	}
+	id := file["id"].(string)
+	o, err := e.srv.Store.GetObject(context.Background(), e.userID(t), mustUUID(t, id), store.KindFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := e.blobs.Get(context.Background(), o.S3Key.ValueOrZero()+".thumb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jpeg.DecodeConfig(bytes.NewReader(sealed)); err == nil {
+		t.Fatal("thumbnail stored in the clear")
+	}
+
+	res, _ := e.do("GET", "/api/files/"+id+"/thumbnail", nil)
+	if res.StatusCode != 200 || res.Header.Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("thumbnail: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	cfg, err := jpeg.DecodeConfig(res.Body)
+	if err != nil || cfg.Width != imageprep.ThumbSide || cfg.Height != imageprep.ThumbSide/2 {
+		t.Fatalf("thumbnail size: %+v %v", cfg, err)
+	}
+
+	res, _ = e.do("GET", "/api/files/"+id+"/view", nil)
+	if res.StatusCode != 200 || res.Header.Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("view: %d", res.StatusCode)
+	}
+	if cfg, err := jpeg.DecodeConfig(res.Body); err != nil || cfg.Width != 1600 {
+		t.Fatalf("view size: %+v %v", cfg, err)
+	}
+
+	text := e.upload("notes.txt", []byte("hello"))
+	for _, path := range []string{"/thumbnail", "/view"} {
+		if r, _ := e.do("GET", "/api/files/"+text["id"].(string)+path, nil); r.StatusCode != 404 {
+			t.Fatalf("text file %s: %d", path, r.StatusCode)
+		}
+	}
+
+	e.must(204, "DELETE", "/api/files/"+id, nil)
+	if _, err := e.blobs.Get(context.Background(), o.S3Key.ValueOrZero()+".thumb"); err == nil {
+		t.Fatal("thumbnail left behind after delete")
+	}
+}
+
+func (e *env) userID(t *testing.T) uuid.UUID {
+	return mustUUID(t, e.must(200, "GET", "/api/me", nil)["user"].(map[string]any)["id"].(string))
 }
 
 func mustUUID(t *testing.T, s string) uuid.UUID {

@@ -1,8 +1,24 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { tick } from 'svelte';
-	import { api, ApiError, sendMessage, usd, bytes, type Attachment, type Chat, type FileItem, type Message } from '../api.ts';
+	import {
+		api,
+		ApiError,
+		sendMessage,
+		usd,
+		bytes,
+		type Attachment,
+		type Chat,
+		type FileItem,
+		type Message,
+		type ToolStep
+	} from '../api.ts';
 	import { app, handoff } from '../state.svelte.ts';
+	import ModelIcon from './ModelIcon.svelte';
+	import ModelPicker from './ModelPicker.svelte';
+	import ToolSteps from './ToolSteps.svelte';
+	import Alert from './Alert.svelte';
+	import Lightbox, { type GalleryImage } from './Lightbox.svelte';
 
 	let { chatID }: { chatID: string | null } = $props();
 
@@ -16,9 +32,13 @@
 	let pickerOpen = $state(false);
 	let pickable = $state<FileItem[]>([]);
 	let uploading = $state(false);
+	let gallery = $state<{ images: GalleryImage[]; index: number } | null>(null);
+	let noThumb = $state<Record<string, boolean>>({});
 
 	let streaming = $state(false);
 	let liveText = $state('');
+	let liveThinking = $state('');
+	let liveSteps = $state<ToolStep[]>([]);
 	let holdMicros = $state(0);
 	let sendError = $state<{ code: string; message: string } | null>(null);
 	let controller: AbortController | null = null;
@@ -88,6 +108,8 @@
 		sendError = null;
 		streaming = true;
 		liveText = '';
+		liveThinking = '';
+		liveSteps = [];
 		holdMicros = 0;
 		const tempID = `pending-${Date.now()}`;
 		messages.push({ id: tempID, role: 'user', content, attachments: files, created_at: new Date().toISOString() });
@@ -110,10 +132,21 @@
 						liveText += d.text;
 						scrollDown();
 					},
+					reasoning: (d) => {
+						liveThinking += d.text;
+					},
+					tool: (d) => {
+						const i = liveSteps.findIndex((x) => x.id === d.id);
+						if (i >= 0) liveSteps[i] = d;
+						else liveSteps.push(d);
+						scrollDown();
+					},
 					done: (d) => {
 						messages = [...messages.filter((m) => m.id !== tempID), d.user_message, d.message];
 						app.balance = d.balance;
 						liveText = '';
+						liveSteps = [];
+						liveThinking = '';
 						if (chat) app.upsertChat({ ...chat, updated_at: new Date().toISOString() });
 					},
 					error: (d) => {
@@ -163,21 +196,21 @@
 	}
 
 	async function changeModel(id: string) {
+		const prev = modelID;
 		modelID = id;
-		if (chat) {
+		if (!chat) return;
+		try {
 			chat = (await api.updateChat(chat.id, { model: id })).chat;
+			app.upsertChat(chat);
+		} catch (err) {
+			modelID = prev;
+			sendError = { code: 'error', message: err instanceof ApiError ? err.message : 'The model could not be changed.' };
 		}
 	}
 
 	async function rename(title: string) {
 		if (!chat || title === chat.title) return;
 		chat = (await api.updateChat(chat.id, { title })).chat;
-		app.upsertChat(chat);
-	}
-
-	async function toggleOffline() {
-		if (!chat) return;
-		chat = (await api.setChatOffline(chat.id, !chat.offline)).chat;
 		app.upsertChat(chat);
 	}
 
@@ -224,6 +257,25 @@
 	}
 
 	const perMTok = (n: number) => (n < 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(n % 1 ? 2 : 0)}`);
+
+	// What the error is about, so the alert can lead with it.
+	const errorTitles: Record<string, string> = {
+		budget_exceeded: 'Not enough credit for this reply',
+		validation: "That message can't be sent",
+		rate_limited: 'Too many messages at once',
+		upstream: 'The model did not answer',
+		internal: 'The reply could not be saved'
+	};
+	const lineColor = (id?: string) => app.model(id ?? '')?.icon?.color;
+
+	// Every image in the conversation, oldest first, so the viewer can step
+	// through them in the order they were sent.
+	const chatImages = $derived(
+		messages.flatMap((m) => (m.attachments ?? []).filter((a) => a.image).map((a) => ({ id: a.id, name: a.name })))
+	);
+	function view(list: GalleryImage[], id: string) {
+		gallery = { images: list, index: Math.max(0, list.findIndex((x) => x.id === id)) };
+	}
 </script>
 
 <section class="chat">
@@ -241,23 +293,9 @@
 			<h1 class="title static">New chat</h1>
 		{/if}
 		<div class="controls">
-			<label class="sr-only" for="model">Model</label>
-			<select id="model" value={modelID} onchange={(e) => changeModel(e.currentTarget.value)} disabled={streaming}>
-				{#each app.models as m (m.id)}
-					<option value={m.id}>{m.name}</option>
-				{/each}
-			</select>
+			<ModelPicker models={app.models} value={modelID} disabled={streaming} onchange={changeModel} />
 			{#if chat}
-				<button
-					class="toggle"
-					class:on={chat.offline}
-					aria-pressed={chat.offline}
-					onclick={toggleOffline}
-					title="Let the server read this chat while you're signed out, for scheduled and background jobs"
-				>
-					<span class="dot"></span>Offline access
-				</button>
-				<button class="btn danger" onclick={remove}>Delete</button>
+				<button class="quiet danger" onclick={remove}>Delete chat</button>
 			{/if}
 		</div>
 	</header>
@@ -265,17 +303,28 @@
 	<div class="scroll" bind:this={scroller}>
 		<div class="column">
 			{#if loading}
-				<p class="micro note">Loading chat…</p>
+				<p class="note">Loading chat…</p>
 			{:else if loadError}
-				<p class="error">{loadError}</p>
+				<Alert title={loadError}>
+					{#snippet action()}<a class="btn" href="/chat">Start a new chat</a>{/snippet}
+				</Alert>
 			{:else if messages.length === 0 && !streaming}
 				<div class="blank">
 					<p class="blank-head">Ask anything.</p>
-					<p class="muted">
-						Your message is encrypted before it's stored. {#if model}{model.name} costs
-						{perMTok(model.prompt_usd_per_mtok)} per million input tokens and
-						{perMTok(model.completion_usd_per_mtok)} per million output tokens.{/if}
-					</p>
+					{#if model}
+						<div class="rider">
+							<ModelIcon icon={model.icon} size={2.5} />
+							<div>
+								<p class="rider-name">{model.name}</p>
+								<p class="muted">
+									{perMTok(model.prompt_usd_per_mtok)} per million tokens in, {perMTok(model.completion_usd_per_mtok)} out.
+									{#if model.tools}It can use the tools switched on in <a href="/settings">Settings</a>.{/if}
+									{#if model.vision}It can read images you attach.{/if}
+								</p>
+							</div>
+						</div>
+					{/if}
+					<p class="muted small">Messages are encrypted before they're stored.</p>
 				</div>
 			{/if}
 
@@ -283,17 +332,34 @@
 				{#if m.role === 'user'}
 					<article class="ticket q">
 						<p class="text">{m.content}</p>
-						{#if m.attachments?.length}
+						{#if m.attachments?.some((a) => a.image)}
+							<ul class="shots">
+								{#each m.attachments.filter((a) => a.image) as a (a.id)}
+									<li>
+										<button type="button" class="shot" onclick={() => view(chatImages, a.id)} aria-label="View {a.name}">
+											{#if noThumb[a.id]}<span>{a.name}</span>{:else}
+												<img src={api.thumbURL(a.id)} alt="" loading="lazy" onerror={() => (noThumb[a.id] = true)} />
+											{/if}
+										</button>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+						{#if m.attachments?.some((a) => !a.image)}
 							<ul class="att">
-								{#each m.attachments as a (a.id)}<li class:img={a.image}>{a.name}</li>{/each}
+								{#each m.attachments.filter((a) => !a.image) as a (a.id)}<li>{a.name}</li>{/each}
 							</ul>
 						{/if}
 					</article>
 				{:else}
 					<article class="a">
+						{#if m.steps?.length}<ToolSteps steps={m.steps} color={lineColor(m.model)} />{/if}
 						<p class="text">{m.content}</p>
 						<p class="receipt">
-							{app.model(m.model ?? '')?.name ?? m.model}
+							<span class="who">
+								<ModelIcon icon={app.model(m.model ?? '')?.icon} size={1} />
+								{app.model(m.model ?? '')?.name ?? m.model}
+							</span>
 							{#if m.usage}
 								<span>{m.usage.prompt_tokens.toLocaleString()} in</span>
 								<span>{m.usage.completion_tokens.toLocaleString()} out</span>
@@ -307,6 +373,13 @@
 
 			{#if streaming}
 				<article class="a live" aria-live="polite">
+					{#if liveSteps.length}<ToolSteps steps={liveSteps} color={lineColor(modelID)} />{/if}
+					{#if liveThinking && !liveText}
+						<details class="thinking">
+							<summary>Thinking…</summary>
+							<p>{liveThinking}</p>
+						</details>
+					{/if}
 					<p class="text">{liveText}<span class="caret"></span></p>
 					<p class="receipt">
 						{#if holdMicros}<span>Holding up to {usd(holdMicros)}</span>{:else}<span>Reserving fare…</span>{/if}
@@ -315,12 +388,13 @@
 			{/if}
 
 			{#if sendError}
-				<div class="alert" role="alert">
-					<p>{sendError.message}</p>
-					{#if sendError.code === 'budget_exceeded'}
-						<a class="btn" href="/account">Add credit</a>
-					{/if}
-				</div>
+				{@const err = sendError}
+				<Alert title={errorTitles[err.code] ?? 'Something went wrong'} ondismiss={() => (sendError = null)}>
+					<p>{err.message}</p>
+					{#snippet action()}
+						{#if err.code === 'budget_exceeded'}<a class="btn" href="/account">Add credit</a>{/if}
+					{/snippet}
+				</Alert>
 			{/if}
 		</div>
 	</div>
@@ -330,10 +404,19 @@
 			{#if attached.length}
 				<ul class="chips">
 					{#each attached as a (a.id)}
-						<li class:img={a.image}>
-							{a.name}
-							<button type="button" aria-label="Remove {a.name}" onclick={() => (attached = attached.filter((x) => x.id !== a.id))}>×</button>
-						</li>
+						{#if a.image && !noThumb[a.id]}
+							<li class="tile">
+								<button type="button" class="shot" aria-label="View {a.name}" onclick={() => view(attached.filter((x) => x.image), a.id)}>
+									<img src={api.thumbURL(a.id)} alt="" onerror={() => (noThumb[a.id] = true)} />
+								</button>
+								<button type="button" class="drop" aria-label="Remove {a.name}" onclick={() => (attached = attached.filter((x) => x.id !== a.id))}>×</button>
+							</li>
+						{:else}
+							<li class:img={a.image}>
+								{a.name}
+								<button type="button" aria-label="Remove {a.name}" onclick={() => (attached = attached.filter((x) => x.id !== a.id))}>×</button>
+							</li>
+						{/if}
 					{/each}
 				</ul>
 			{/if}
@@ -345,7 +428,8 @@
 					</label>
 					{#each pickable as f (f.id)}
 						<button type="button" class="pick" onclick={() => attach(f)}>
-							<span class:img={f.image}>{f.name}</span><span class="muted">{bytes(f.size)}</span>
+							{#if f.thumb}<img src={api.thumbURL(f.id)} alt="" loading="lazy" />{/if}
+							<span class="pick-name" class:img={f.image && !f.thumb}>{f.name}</span><span class="muted">{bytes(f.size)}</span>
 						</button>
 					{:else}
 						<p class="muted">{model?.vision ? 'No text files or images yet.' : 'No text files yet.'} Upload one to attach it.</p>
@@ -353,8 +437,25 @@
 				</div>
 			{/if}
 			<div class="box">
-				<button type="button" class="clip" aria-expanded={pickerOpen} onclick={openPicker} disabled={attached.length >= 5}>
-					Attach
+				<button
+					type="button"
+					class="clip"
+					aria-expanded={pickerOpen}
+					aria-label="Attach files"
+					title={attached.length >= 5 ? 'Up to 5 files per message' : 'Attach files'}
+					onclick={openPicker}
+					disabled={attached.length >= 5}
+				>
+					<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+						<path
+							d="M20.5 11.5 12.3 19.7a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						/>
+					</svg>
 				</button>
 				<textarea
 					bind:this={input}
@@ -376,6 +477,10 @@
 		</div>
 	</form>
 </section>
+
+{#if gallery}
+	<Lightbox images={gallery.images} bind:index={gallery.index} onclose={() => (gallery = null)} />
+{/if}
 
 <style>
 	.chat {
@@ -413,42 +518,73 @@
 		gap: 0.5rem;
 		flex-wrap: wrap;
 	}
-	select {
+	.quiet {
 		font: inherit;
-		font-size: 0.875rem;
+		font-size: 0.8125rem;
 		font-weight: 600;
-		background: #0d0d0d;
-		color: var(--paper);
-		border: 2px solid var(--rule);
-		border-radius: 999px;
-		padding: 0.4rem 0.75rem;
-	}
-	.toggle {
-		font: inherit;
-		font-size: 0.875rem;
-		font-weight: 600;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
 		background: none;
-		border: 2px solid var(--rule);
+		border: 0;
 		color: var(--muted);
-		border-radius: 999px;
-		padding: 0.4rem 0.75rem;
+		padding: 0.375rem 0.25rem;
 		cursor: pointer;
 	}
-	.toggle .dot {
-		width: 0.625rem;
-		height: 0.625rem;
-		border-radius: 50%;
-		border: 2px solid currentColor;
+	.quiet.danger:hover {
+		color: var(--line-red);
 	}
-	.toggle.on {
-		color: var(--line-yellow);
-		border-color: var(--line-yellow);
+	.rider {
+		display: flex;
+		gap: 0.875rem;
+		align-items: flex-start;
+		margin-top: 1.25rem;
 	}
-	.toggle.on .dot {
-		background: currentColor;
+	.rider-name {
+		margin: 0.125rem 0 0.25rem;
+		font-weight: 800;
+		font-size: 1.125rem;
+	}
+	.rider .muted {
+		margin: 0;
+	}
+	.rider a {
+		color: var(--paper);
+	}
+	.small {
+		font-size: 0.8125rem;
+		margin-top: 1.5rem;
+	}
+	.who {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		color: #b5b2ab;
+		font-weight: 600;
+	}
+	.thinking {
+		margin-bottom: 0.5rem;
+		font-size: 0.875rem;
+		color: var(--muted);
+	}
+	.thinking summary {
+		cursor: pointer;
+		font-weight: 600;
+		animation: breathe 1.6s ease-in-out infinite;
+	}
+	.thinking[open] summary {
+		animation: none;
+	}
+	.thinking p {
+		margin: 0.5rem 0 0;
+		padding-left: 0.75rem;
+		border-left: 2px solid var(--rule);
+		white-space: pre-wrap;
+		line-height: 1.5;
+		max-height: 12rem;
+		overflow-y: auto;
+	}
+	@keyframes breathe {
+		50% {
+			opacity: 0.45;
+		}
 	}
 	.scroll {
 		overflow-y: auto;
@@ -505,6 +641,7 @@
 	}
 	.receipt {
 		display: flex;
+		align-items: center;
 		flex-wrap: wrap;
 		gap: 0.25rem 0.875rem;
 		margin: 0.5rem 0 0;
@@ -532,21 +669,6 @@
 		50% {
 			opacity: 0;
 		}
-	}
-	.alert {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		border: 2px solid var(--line-red);
-		border-radius: 6px;
-		padding: 0.75rem 1rem;
-	}
-	.alert p {
-		margin: 0;
-	}
-	.alert .btn {
-		text-decoration: none;
 	}
 	.composer {
 		padding: 0.75rem 1.5rem 1rem;
@@ -581,14 +703,25 @@
 		outline: none;
 	}
 	.clip {
-		font: inherit;
-		font-size: 0.8125rem;
-		font-weight: 700;
+		display: grid;
+		place-items: center;
+		width: 2.5rem;
+		height: 2.5rem;
 		background: none;
 		border: 0;
+		border-radius: 6px;
 		color: var(--muted);
-		padding: 0.6rem 0.5rem;
+		padding: 0;
 		cursor: pointer;
+		flex: none;
+	}
+	.clip[aria-expanded='true'] {
+		color: var(--stock);
+		background: #161616;
+	}
+	.clip:disabled {
+		opacity: 0.35;
+		cursor: default;
 	}
 	.clip:hover:not(:disabled) {
 		color: var(--paper);
@@ -616,6 +749,68 @@
 		font-weight: 600;
 		padding: 0.25rem 0.25rem 0.25rem 0.625rem;
 		border-radius: 999px;
+	}
+	/* An attached image shows as a small print with a remove tab. */
+	.chips li.tile {
+		position: relative;
+		padding: 0;
+		background: none;
+		border-radius: 6px;
+	}
+	.chips .shot {
+		padding: 0;
+	}
+	.chips .shot img {
+		width: 4rem;
+		height: 4rem;
+	}
+	.chips .drop {
+		position: absolute;
+		top: -0.4rem;
+		right: -0.4rem;
+		width: 1.375rem;
+		height: 1.375rem;
+		padding: 0;
+		border-radius: 50%;
+		background: var(--stock);
+		color: var(--ink);
+		font-weight: 800;
+		line-height: 1;
+		box-shadow: 0 0 0 2px var(--black);
+	}
+	.shots {
+		list-style: none;
+		margin: 0.5rem 0 0;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.375rem;
+	}
+	.shot {
+		display: block;
+		padding: 0;
+		border: 0;
+		border-radius: 6px;
+		overflow: hidden;
+		background: #0a0a0a;
+		cursor: zoom-in;
+		border-bottom: 3px solid var(--line-yellow);
+	}
+	.shot img {
+		display: block;
+		width: 7.5rem;
+		height: 7.5rem;
+		object-fit: cover;
+	}
+	.shot span {
+		display: block;
+		padding: 0.5rem 0.75rem;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--paper);
+	}
+	.shot:hover img {
+		filter: brightness(1.1);
 	}
 	.chips button {
 		font: inherit;
@@ -652,8 +847,8 @@
 	.pick {
 		font: inherit;
 		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
+		align-items: center;
+		gap: 0.75rem;
 		text-align: left;
 		background: none;
 		border: 0;
@@ -661,6 +856,20 @@
 		padding: 0.5rem;
 		border-radius: 4px;
 		cursor: pointer;
+	}
+	.pick img {
+		width: 2rem;
+		height: 2rem;
+		object-fit: cover;
+		border-radius: 3px;
+		flex: none;
+	}
+	.pick-name {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.pick:hover {
 		background: #151515;

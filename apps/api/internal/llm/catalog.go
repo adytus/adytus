@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 )
 
 // Model is a whitelisted model. Only catalog models can be used; for
@@ -26,6 +27,18 @@ type Model struct {
 	// so the real count stays under it.
 	Vision      bool `json:"vision"`
 	ImageTokens int  `json:"image_tokens,omitempty"`
+	// Tools models can call tools (calculator, search, python).
+	Tools bool `json:"tools"`
+	// Icon is the model's badge in the UI.
+	Icon Icon `json:"icon"`
+}
+
+// Icon is a transit-style line badge: a short code in a colored shape.
+type Icon struct {
+	Code  string `json:"code"`
+	Color string `json:"color"`
+	// Shape is circle, square, diamond or hexagon.
+	Shape string `json:"shape"`
 }
 
 // Cost in micro-USD, rounded up.
@@ -62,6 +75,9 @@ func LoadCatalog(path string) (*Catalog, error) {
 
 func NewCatalog(models []Model) (*Catalog, error) {
 	c := &Catalog{Models: models, byID: make(map[string]Model, len(models))}
+	for i := range models {
+		models[i].Icon = models[i].Icon.withDefaults(models[i].ID, i)
+	}
 	for _, m := range models {
 		switch {
 		case m.ID == "" || m.Upstream == "":
@@ -90,3 +106,22 @@ func (c *Catalog) Get(id string) (Model, bool) {
 }
 
 func (c *Catalog) Default() Model { return c.Models[0] }
+
+var iconColors = []string{"#1e5bff", "#ffc400", "#e8322b", "#7b4bd6", "#2fbf71"}
+
+// withDefaults fills a missing badge from the model ID and its position.
+func (ic Icon) withDefaults(id string, i int) Icon {
+	if ic.Code == "" {
+		code := []rune(strings.ToUpper(strings.NewReplacer("-", "", ".", "", ":", "", "/", "").Replace(id)))
+		ic.Code = string(code[:min(2, len(code))])
+	}
+	if ic.Color == "" {
+		ic.Color = iconColors[i%len(iconColors)]
+	}
+	switch ic.Shape {
+	case "circle", "square", "diamond", "hexagon":
+	default:
+		ic.Shape = "circle"
+	}
+	return ic
+}

@@ -20,6 +20,7 @@ services:
   # Local stand-in for OpenRouter. Pull the model once with:
   #   docker-compose exec ollama ollama pull gemma3:270m
   #   docker-compose exec ollama ollama pull qwen2.5vl:3b   # vision
+  #   docker-compose exec ollama ollama pull qwen3-vl:4b    # vision + tools
   ollama:
     image: ollama/ollama:latest
     ports: ["11434:11434"]
@@ -29,8 +30,17 @@ services:
       # change it per request; prompts over it are cut from the front without
       # an error. Keep this equal to context_tokens in models.ollama.json.
       OLLAMA_CONTEXT_LENGTH: "16384"
-      # Keep both catalog models resident instead of swapping on each request.
+      # Keep two models resident instead of swapping on each request.
       OLLAMA_MAX_LOADED_MODELS: "2"
+
+  # Web search for the search tool. Bound to localhost: only the API uses it.
+  searxng:
+    image: searxng/searxng:latest
+    ports: ["127.0.0.1:8888:8080"]
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-dev-only-change-me}
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
 
 volumes:
   pgdata:

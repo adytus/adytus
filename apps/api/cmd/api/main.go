@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -16,6 +18,7 @@ import (
 	"github.com/reaganiwadha/adytus/apps/api/internal/server"
 	"github.com/reaganiwadha/adytus/apps/api/internal/session"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
+	"github.com/reaganiwadha/adytus/apps/api/internal/tools"
 )
 
 func main() {
@@ -54,6 +57,11 @@ func run() error {
 		return err
 	}
 
+	registry, err := buildTools(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
 	sessions := session.NewStore(cfg.SessionTTL, cfg.SessionIdle)
 	go sessions.Run(ctx, time.Minute)
 
@@ -66,6 +74,7 @@ func run() error {
 		Payments: billing.MockGateway{},
 		Sessions: sessions,
 		Blobs:    blobs,
+		Tools:    registry,
 	})
 
 	go func() {
@@ -73,6 +82,38 @@ func run() error {
 		_ = srv.App.ShutdownWithTimeout(10 * time.Second)
 	}()
 
-	slog.Info("listening", "addr", cfg.Addr, "llm", cfg.LLMProvider, "models", len(catalog.Models))
+	var toolIDs []string
+	for _, t := range registry.Infos() {
+		toolIDs = append(toolIDs, t.ID)
+	}
+	slog.Info("listening", "addr", cfg.Addr, "llm", cfg.LLMProvider, "models", len(catalog.Models), "tools", toolIDs)
 	return srv.App.Listen(cfg.Addr)
+}
+
+// buildTools sets up the tools whose backends are configured. A missing
+// Python interpreter only disables that tool, so a fresh checkout still runs.
+func buildTools(ctx context.Context, cfg *config.Config) (*tools.Registry, error) {
+	var search *tools.Search
+	if cfg.SearxngURL != "" {
+		search = tools.NewSearch(cfg.SearxngURL)
+	}
+	var py *tools.Python
+	if cfg.PythonWasm != "" {
+		p, err := tools.NewPython(ctx, tools.PythonConfig{
+			WasmPath: cfg.PythonWasm,
+			Timeout:  cfg.PythonTimeout,
+			MemoryMB: uint32(cfg.PythonMemoryMB),
+			MaxOut:   16 << 10,
+			Parallel: cfg.PythonParallel,
+		})
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			slog.Warn("python sandbox disabled: interpreter not found; run scripts/fetch-python-wasm.sh", "path", cfg.PythonWasm)
+		case err != nil:
+			return nil, err
+		default:
+			py = p
+		}
+	}
+	return tools.NewRegistry(search, py)
 }
