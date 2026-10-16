@@ -13,7 +13,10 @@ Initial thinking from the brief; nothing here is final or implemented.
 | Frontend | Svelte, Bun |
 | LLM | OpenRouter (single backend key), Ollama for local mock |
 
-## Encryption model (draft)
+## Encryption model
+
+Implemented primitives live in `apps/api/internal/crypto`: Argon2id (one run, split into an auth key and the KEK; only `sha256(auth key)` is stored), XChaCha20-Poly1305 for all sealing and key wrapping, with the owning row's ID as associated data.
+
 
 Key hierarchy:
 
@@ -25,12 +28,12 @@ Key hierarchy:
 Sessions as decrypt hosts:
 
 - While a user is connected, the session holds the unwrapped MK in memory and can unwrap DEKs.
-- The browser decrypts chats client-side. The backend can decrypt an object with nobody connected only if its DEK was handed over (e.g. a per-object key re-wrapped to a server-held key), so this is the main design decision to settle.
+- The browser decrypts chats client-side.
+- **Decided: offline decryption is opt-in per object.** By default a DEK is wrapped only with the MK, so nothing is readable while the user is offline. When the user opts an object in (e.g. for background title generation or file processing), its DEK is also wrapped with the server key (`SERVER_KEY`) and stored in `objects.server_wrapped_dek`. Clearing that column revokes access. The UI must make clear which objects are opted in, since those are readable by whoever holds the server key.
 - Prompts must reach OpenRouter in plaintext, so the backend sees them in memory during a request but must never persist them unencrypted.
 
 ## Open questions
 
-- Which objects may the server decrypt offline (title generation, summaries, file processing)? Each one weakens the "admins can't access" guarantee.
 - Password recovery: with a single secret password and no admin access, a lost password means lost data. Do we offer a recovery key?
 - Streaming responses: encrypt-on-write after the stream completes vs per-chunk.
 - Token counting: tokenizer per model vs trusting OpenRouter usage fields; budget accounting in the ledger.
