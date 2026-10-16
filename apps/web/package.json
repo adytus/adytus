@@ -1,8 +1,22 @@
 {
 	"name": "web",
-	"private": true,
 	"version": "0.0.1",
-	"type": "module",
+	"devDependencies": {
+		"@sveltejs/adapter-auto": "^8.0.0",
+		"@sveltejs/kit": "^3.0.0",
+		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@tailwindcss/vite": "4.3.3",
+		"svelte": "^5.57.1",
+		"svelte-check": "^4.6.0",
+		"tailwindcss": "4.3.3",
+		"typescript": "^6.0.3",
+		"vite": "^8.3.0"
+	},
+	"imports": {
+		"#lib": "./src/lib/index.js",
+		"#lib/*": "./src/lib/*"
+	},
+	"private": true,
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
@@ -11,17 +25,9 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
 	},
-	"devDependencies": {
-		"@sveltejs/adapter-auto": "^8.0.0",
-		"@sveltejs/kit": "^3.0.0",
-		"@sveltejs/vite-plugin-svelte": "^7.2.0",
-		"svelte": "^5.57.1",
-		"svelte-check": "^4.6.0",
-		"typescript": "^6.0.3",
-		"vite": "^8.3.0"
-	},
-	"imports": {
-		"#lib": "./src/lib/index.js",
-		"#lib/*": "./src/lib/*"
+	"type": "module",
+	"dependencies": {
+		"date-fns": "^4.4.0",
+		"svelte-streamdown": "^4.2.1"
 	}
 }

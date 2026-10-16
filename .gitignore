@@ -1,3 +1,2 @@
 .env
 *.local
-apps/api/third_party/

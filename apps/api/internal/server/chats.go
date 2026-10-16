@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +44,9 @@ type attachment struct {
 	ID    uuid.UUID `json:"id"`
 	Name  string    `json:"name"`
 	Image bool      `json:"image,omitempty"`
+	// Python marks a file the model doesn't read itself, only through the
+	// python tool: too large, not text, or an image it can't see.
+	Python bool `json:"python,omitempty"`
 }
 
 type messageUsage struct {
@@ -354,6 +359,10 @@ func (at *attachments) message(b messageBody) *schema.Message {
 	var sb strings.Builder
 	var imgs []schema.MessageInputPart
 	for _, att := range b.Attachments {
+		if att.Python {
+			fmt.Fprintf(&sb, "<file name=%q>[not shown to you; the python tool can open it]</file>\n\n", att.Name)
+			continue
+		}
 		at.load(att)
 		if data, ok := at.images[att.ID]; ok {
 			imgs = append(imgs, schema.MessageInputPart{
@@ -391,8 +400,21 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		return errs.Validation.New("this chat's model is no longer available; pick another")
 	}
 
-	// Attachments must be the user's files: text small enough to inline, or
-	// images when the model has vision.
+	settings, err := s.Store.Settings(ctx, a.UserID)
+	if err != nil {
+		return err
+	}
+	// Tools are offered when the model can call them and the user left
+	// some switched on.
+	var toolIDs []string
+	if spec.Tools && s.Tools != nil {
+		toolIDs = s.Tools.Enabled(settings.Tools)
+	}
+	python := slices.Contains(toolIDs, tools.PythonID)
+
+	// Attachments must be the user's files: text small enough to inline,
+	// images when the model has vision, or anything when the python tool
+	// can open it.
 	userMsg := messageBody{Role: "user", Content: req.Content}
 	at := &attachments{s: s, ctx: ctx, a: a, vision: spec.Vision, text: map[uuid.UUID]string{}, images: map[uuid.UUID]string{}}
 	total := 0
@@ -401,34 +423,68 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		if err != nil {
 			return err
 		}
+		att := attachment{ID: id, Name: fm.Name, Image: fm.Image}
 		switch {
-		case fm.Image && !spec.Vision:
-			return errs.Validation.New("%s can't see images; switch to a vision model to attach %s", spec.Name, fm.Name)
-		case fm.Image:
-			if len(data) > maxImageBytes {
-				return errs.Validation.New("%s is too large to attach (max %d MB)", fm.Name, maxImageBytes>>20)
-			}
+		case fm.Image && spec.Vision && len(data) <= maxImageBytes:
 			jpg, err := imageprep.Prepare(data)
 			if err != nil {
 				return errs.Validation.New("%s: %s", fm.Name, err.Error())
 			}
 			at.images[id] = base64.StdEncoding.EncodeToString(jpg)
-		case fm.Text:
-			if total += len(data); total > maxAttachmentBytes {
-				return errs.Validation.New("attachments are too large (max %d KB of text in total)", maxAttachmentBytes/1024)
-			}
+		case fm.Text && total+len(data) <= maxAttachmentBytes:
+			total += len(data)
 			at.text[id] = string(data)
+		case python:
+			att.Python = true
+		case fm.Image && !spec.Vision:
+			return errs.Validation.New("%s can't see images; switch to a vision model to attach %s", spec.Name, fm.Name)
+		case fm.Image:
+			return errs.Validation.New("%s is too large to attach (max %d MB)", fm.Name, maxImageBytes>>20)
+		case fm.Text:
+			return errs.Validation.New("attachments are too large (max %d KB of text in total)", maxAttachmentBytes/1024)
 		default:
-			return errs.Validation.New("%s can't be attached; only text files and images can", fm.Name)
+			return errs.Validation.New("%s can't be attached; only text files and images can, or any file when the Python tool is on", fm.Name)
 		}
-		userMsg.Attachments = append(userMsg.Attachments, attachment{id, fm.Name, fm.Image})
+		userMsg.Attachments = append(userMsg.Attachments, att)
 	}
 
 	history, err := s.loadMessages(ctx, a, chat.ID)
 	if err != nil {
 		return err
 	}
-	prompt := []*schema.Message{schema.SystemMessage(s.Config.SystemPrompt)}
+	// The python tool can open the chat's files: everything attached and
+	// everything tools saved, newest first.
+	var ws *workspace
+	system := s.Config.SystemPrompt
+	if python {
+		var ids []uuid.UUID
+		for _, m := range append(history, messageView{messageBody: userMsg}) {
+			for _, att := range m.Attachments {
+				ids = append(ids, att.ID)
+			}
+			for _, st := range m.Steps {
+				for _, f := range st.Files {
+					if id, err := uuid.Parse(f.ID); err == nil {
+						ids = append(ids, id)
+					}
+				}
+			}
+		}
+		slices.Reverse(ids)
+		if ws, err = s.newWorkspace(ctx, a, ids); err != nil {
+			return err
+		}
+		system += ws.prompt()
+	}
+	// Until the stream takes it over, the workspace is closed on any error.
+	streaming := false
+	defer func() {
+		if ws != nil && !streaming {
+			ws.close()
+		}
+	}()
+
+	prompt := []*schema.Message{schema.SystemMessage(system)}
 	for _, m := range history {
 		if m.Content == "" {
 			continue
@@ -440,17 +496,6 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	prompt, _, err = llm.FitContext(spec, prompt)
 	if err != nil {
 		return errs.Validation.New("%s", err.Error())
-	}
-
-	// Tools are offered when the model can call them and the user left
-	// some switched on.
-	var toolIDs []string
-	if spec.Tools && s.Tools != nil {
-		st, err := s.Store.Settings(ctx, a.UserID)
-		if err != nil {
-			return err
-		}
-		toolIDs = s.Tools.Enabled(st.Tools)
 	}
 
 	// Hold the worst case for the first call (estimated prompt, tool
@@ -476,21 +521,27 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 
 	// Prepare everything that needs the master key now: the stream writer
 	// runs after this handler returns, when the request's MK is zeroed.
-	prepared, err := s.prepareReply(a, chat, &meta, userMsg, req.Content)
+	prepared, err := s.prepareReply(a, chat, &meta, userMsg, req.Content, settings.AutoTitleOn())
 	if err != nil {
 		mm.ReleasePending(ctx)
 		return err
 	}
 
 	userID := a.UserID
+	streaming = true
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
 	c.Set("X-Accel-Buffering", "no")
 
 	return c.SendStreamWriter(func(w *bufio.Writer) {
 		defer crypto.Zero(prepared.replyDEK)
+		defer crypto.Zero(prepared.chatDEK)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		if ws != nil {
+			defer ws.close()
+			ctx = tools.WithWorkspace(ctx, ws)
+		}
 
 		// Tool steps arrive from the tools node, possibly in parallel.
 		var mu sync.Mutex
@@ -509,6 +560,21 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		}
 
 		_ = send("start", fiber.Map{"user_message_id": prepared.userObj.ID, "message_id": prepared.replyObj.ID, "title": meta.Title, "hold_micros": holdAmount})
+
+		// A new chat is named by the model while the reply streams; the
+		// message's first words stand in until then.
+		titled := make(chan string, 1)
+		if prepared.chatDEK != nil {
+			titleCtx, cancelTitle := context.WithTimeout(ctx, 30*time.Second)
+			defer cancelTitle()
+			go func() {
+				t := s.generateTitle(titleCtx, userID, spec, req.Content)
+				if t != "" {
+					_ = send("title", fiber.Map{"title": t})
+				}
+				titled <- t
+			}()
+		}
 
 		var content strings.Builder
 		var steps []tools.Step
@@ -573,6 +639,15 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 			Usage: &messageUsage{usage.PromptTokens, usage.CompletionTokens, usage.CostMicros},
 			Steps: steps,
 		}
+		if prepared.chatDEK != nil {
+			if t := <-titled; t != "" {
+				named := prepared.meta
+				named.Title = t
+				if ct, err := vault.Seal(prepared.chatDEK, chat.ID, named); err == nil {
+					prepared.chatCiphertext = ct
+				}
+			}
+		}
 		if err := s.storeReply(ctx, chat.ID, prepared, reply); err != nil {
 			slog.Error("store messages", "err", err, "user", userID)
 			_ = send("error", fiber.Map{"error": "internal", "message": "reply could not be saved"})
@@ -616,9 +691,13 @@ type preparedReply struct {
 	userObj, replyObj *store.Object
 	replyDEK          []byte
 	chatCiphertext    []byte // set when the chat gets its title
+	// chatDEK and meta are kept when the model should name the chat, to
+	// seal the title once it arrives.
+	chatDEK []byte
+	meta    chatMeta
 }
 
-func (s *Server) prepareReply(a *authCtx, chat *store.Object, meta *chatMeta, userMsg messageBody, content string) (*preparedReply, error) {
+func (s *Server) prepareReply(a *authCtx, chat *store.Object, meta *chatMeta, userMsg messageBody, content string, autoTitle bool) (*preparedReply, error) {
 	var serverKey []byte
 	if chat.ServerWrappedDEK != nil {
 		serverKey = s.Config.ServerKey
@@ -645,9 +724,14 @@ func (s *Server) prepareReply(a *authCtx, chat *store.Object, meta *chatMeta, us
 			return nil, err
 		}
 		p.chatCiphertext, err = vault.Seal(chatDEK, chat.ID, meta)
-		crypto.Zero(chatDEK)
+		if err != nil || !autoTitle {
+			crypto.Zero(chatDEK)
+		}
 		if err != nil {
 			return nil, err
+		}
+		if autoTitle {
+			p.chatDEK, p.meta = chatDEK, *meta
 		}
 	}
 	return p, nil
@@ -666,10 +750,53 @@ func (s *Server) storeReply(ctx context.Context, chatID uuid.UUID, p *preparedRe
 			return err
 		}
 		if p.chatCiphertext != nil {
-			return store.UpdateCiphertext(ctx, tx, chatID, p.chatCiphertext)
+			if err := store.UpdateCiphertext(ctx, tx, chatID, p.chatCiphertext); err != nil {
+				return err
+			}
 		}
 		return store.Touch(ctx, tx, chatID)
 	})
+}
+
+// generateTitle asks the chat's model to name a chat that opens with
+// content. The call is metered and billed like any other; on failure it
+// returns "" and the chat keeps its stand-in title.
+func (s *Server) generateTitle(ctx context.Context, userID uuid.UUID, spec llm.Model, content string) string {
+	if r := []rune(content); len(r) > 2000 {
+		content = string(r[:2000])
+	}
+	mm := meter.New(s.LLM, s.Ledger, userID, spec)
+	out, err := mm.Generate(ctx, []*schema.Message{
+		schema.SystemMessage("You name chats. Reply with a title of 2 to 6 words for a chat that opens with the user's message below, in the message's language. Reply with the title only: no quotes, no markdown, no final period."),
+		schema.UserMessage(content),
+	})
+	if err != nil {
+		slog.Warn("chat title", "err", err)
+		return ""
+	}
+	return cleanTitle(out.Content)
+}
+
+const titleDecor = " \t\"'`*#_“”‘’"
+
+var thinkBlock = regexp.MustCompile(`(?s)<think>.*?(</think>|$)`)
+
+// cleanTitle takes the first line of a model's title and strips the
+// decoration models add anyway.
+func cleanTitle(s string) string {
+	s = thinkBlock.ReplaceAllString(s, "")
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) >= 6 && strings.EqualFold(line[:6], "title:") {
+			line = line[6:]
+		}
+		line = strings.Trim(line, titleDecor)
+		line = strings.Trim(strings.TrimRight(line, ".。"), titleDecor)
+		if line != "" {
+			return titleFrom(line)
+		}
+	}
+	return ""
 }
 
 var errClientGone = fmt.Errorf("client disconnected")

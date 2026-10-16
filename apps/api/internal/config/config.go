@@ -42,10 +42,16 @@ type Config struct {
 	S3SecretKey    string `env:"S3_SECRET_KEY" envDefault:"adytus-secret"`
 	MaxUploadBytes int    `env:"MAX_UPLOAD_BYTES" envDefault:"26214400"`
 
-	// Tools. An empty SEARXNG_URL leaves web search out; a missing wasm file
-	// leaves the Python sandbox out.
+	// Tools. An empty SEARXNG_URL leaves web search out. The Python sandbox
+	// runs in docker containers under gVisor (PYTHON_RUNTIME=runsc);
+	// PYTHON_RUNTIME=runc runs them without it, for machines that lack it.
+	// PYTHON_ENABLED=false leaves the sandbox out.
 	SearxngURL     string        `env:"SEARXNG_URL" envDefault:"http://127.0.0.1:8888"`
-	PythonWasm     string        `env:"PYTHON_WASM" envDefault:"third_party/python/python-3.12.0.wasm"`
+	PythonEnabled  bool          `env:"PYTHON_ENABLED" envDefault:"true"`
+	PythonImage    string        `env:"PYTHON_IMAGE" envDefault:"adytus-sandbox"`
+	PythonRuntime  string        `env:"PYTHON_RUNTIME" envDefault:"runsc"`
+	PythonCPUs     string        `env:"PYTHON_CPUS" envDefault:"1"`
+	PythonWarm     int           `env:"PYTHON_WARM" envDefault:"2"`
 	PythonTimeout  time.Duration `env:"PYTHON_TIMEOUT" envDefault:"10s"`
 	PythonMemoryMB int           `env:"PYTHON_MEMORY_MB" envDefault:"256"`
 	PythonParallel int           `env:"PYTHON_PARALLEL" envDefault:"2"`

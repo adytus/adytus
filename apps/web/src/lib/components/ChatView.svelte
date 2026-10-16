@@ -17,6 +17,7 @@
 	import ModelIcon from './ModelIcon.svelte';
 	import ModelPicker from './ModelPicker.svelte';
 	import ToolSteps from './ToolSteps.svelte';
+	import Markdown from './Markdown.svelte';
 	import Alert from './Alert.svelte';
 	import Lightbox, { type GalleryImage } from './Lightbox.svelte';
 
@@ -34,6 +35,8 @@
 	let uploading = $state(false);
 	let gallery = $state<{ images: GalleryImage[]; index: number } | null>(null);
 	let noThumb = $state<Record<string, boolean>>({});
+	// Any file can be attached when the python tool is on to open it.
+	let pythonOn = $state(false);
 
 	let streaming = $state(false);
 	let liveText = $state('');
@@ -123,10 +126,18 @@
 				{
 					start: (d) => {
 						holdMicros = d.hold_micros;
-						if (chat && d.title && !chat.title) {
-							chat.title = d.title;
+						if (chat) {
+							// The chat moves to the top of the list as soon as it's sent to.
+							if (d.title && !chat.title) chat.title = d.title;
+							chat.updated_at = new Date().toISOString();
+							app.upsertChat({ ...chat });
 						}
 						app.refreshBalance();
+					},
+					title: (d) => {
+						if (!chat) return;
+						chat.title = d.title;
+						app.upsertChat({ ...chat });
 					},
 					delta: (d) => {
 						liveText += d.text;
@@ -226,7 +237,14 @@
 		if (pickerOpen) pickable = (await api.files()).files.filter(canAttach);
 	}
 
-	const canAttach = (f: FileItem) => f.text || (f.image && !!model?.vision);
+	$effect(() => {
+		api.settings().then(
+			(s) => (pythonOn = s.tools.some((t) => t.id === 'python' && t.enabled)),
+			() => {}
+		);
+	});
+	const python = $derived(pythonOn && !!model?.tools);
+	const canAttach = (f: FileItem) => f.text || (f.image && !!model?.vision) || python;
 
 	function attach(f: FileItem) {
 		if (attached.length >= 5 || attached.some((a) => a.id === f.id)) return;
@@ -244,7 +262,9 @@
 		try {
 			const { file: up } = await api.upload(file);
 			if (!canAttach(up)) {
-				const why = up.image ? `${model?.name ?? 'This model'} can't see images; switch to a vision model to attach it.` : 'only text files and images can be attached to a message.';
+				const why = up.image
+					? `${model?.name ?? 'This model'} can't see images; switch to a vision model or turn on the Python tool to attach it.`
+					: 'only text files and images can be attached to a message, or any file when the Python tool is on.';
 				sendError = { code: 'validation', message: `${up.name} was saved to Files, but ${why}` };
 			} else {
 				attach(up);
@@ -268,10 +288,14 @@
 	};
 	const lineColor = (id?: string) => app.model(id ?? '')?.icon?.color;
 
-	// Every image in the conversation, oldest first, so the viewer can step
-	// through them in the order they were sent.
+	// Every image in the conversation, sent or made by a tool, oldest first,
+	// so the viewer can step through them in order.
 	const chatImages = $derived(
-		messages.flatMap((m) => (m.attachments ?? []).filter((a) => a.image).map((a) => ({ id: a.id, name: a.name })))
+		messages.flatMap((m) =>
+			[...(m.attachments ?? []), ...(m.steps ?? []).flatMap((s) => s.files ?? [])]
+				.filter((a) => a.image)
+				.map((a) => ({ id: a.id, name: a.name }))
+		)
 	);
 	function view(list: GalleryImage[], id: string) {
 		gallery = { images: list, index: Math.max(0, list.findIndex((x) => x.id === id)) };
@@ -353,8 +377,8 @@
 					</article>
 				{:else}
 					<article class="a">
-						{#if m.steps?.length}<ToolSteps steps={m.steps} color={lineColor(m.model)} />{/if}
-						<p class="text">{m.content}</p>
+						{#if m.steps?.length}<ToolSteps steps={m.steps} color={lineColor(m.model)} onview={(id) => view(chatImages, id)} />{/if}
+						<Markdown text={m.content} />
 						<p class="receipt">
 							<span class="who">
 								<ModelIcon icon={app.model(m.model ?? '')?.icon} size={1} />
@@ -380,7 +404,7 @@
 							<p>{liveThinking}</p>
 						</details>
 					{/if}
-					<p class="text">{liveText}<span class="caret"></span></p>
+					{#if liveText}<Markdown text={liveText} live />{:else}<p class="text"><span class="caret"></span></p>{/if}
 					<p class="receipt">
 						{#if holdMicros}<span>Holding up to {usd(holdMicros)}</span>{:else}<span>Reserving fare…</span>{/if}
 					</p>
@@ -432,7 +456,7 @@
 							<span class="pick-name" class:img={f.image && !f.thumb}>{f.name}</span><span class="muted">{bytes(f.size)}</span>
 						</button>
 					{:else}
-						<p class="muted">{model?.vision ? 'No text files or images yet.' : 'No text files yet.'} Upload one to attach it.</p>
+						<p class="muted">{python ? 'No files yet.' : model?.vision ? 'No text files or images yet.' : 'No text files yet.'} Upload one to attach it.</p>
 					{/each}
 				</div>
 			{/if}

@@ -55,10 +55,20 @@ type fakeLLM struct {
 	lastTools []string
 	fail      bool
 	noUsage   bool
+	// title is what Generate (only used to name chats) answers; empty fails.
+	title string
 }
 
 func (f *fakeLLM) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
-	return nil, errors.New("not used")
+	f.mu.Lock()
+	title := f.title
+	f.mu.Unlock()
+	if title == "" {
+		return nil, errors.New("not used")
+	}
+	out := schema.AssistantMessage(title, nil)
+	out.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 100, CompletionTokens: 10}}
+	return out, nil
 }
 
 func (f *fakeLLM) WithTools(infos []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
@@ -96,6 +106,12 @@ func (f *fakeLLM) stream(msgs []*schema.Message, opts []model.Option, offered []
 		Usage: &schema.TokenUsage{PromptTokens: 1000, CompletionTokens: 100},
 	}}
 	lastMsg := msgs[len(msgs)-1]
+	if args, ok := strings.CutPrefix(lastLine(text(lastMsg)), "py "); ok && slices.Contains(offered, "python") {
+		idx := 0
+		call := schema.AssistantMessage("", []schema.ToolCall{{Index: &idx, ID: "call_py", Type: "function",
+			Function: schema.FunctionCall{Name: "python", Arguments: args}}})
+		return schema.StreamReaderFromArray([]*schema.Message{call, usage}), nil
+	}
 	if expr, ok := strings.CutPrefix(text(lastMsg), "calc "); ok && slices.Contains(offered, "calculator") {
 		args, _ := json.Marshal(map[string]string{"expression": expr})
 		idx := 0
@@ -147,7 +163,10 @@ type env struct {
 	cookie string
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
+
+// newEnvWith sets up a server whose python tool runs on py.
+func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
@@ -180,7 +199,7 @@ func newEnv(t *testing.T) *env {
 		KDF:            crypto.KDFParams{Time: 1, MemoryKiB: 1024, Threads: 1},
 		ToolMaxSteps:   4,
 	}
-	registry, err := tools.NewRegistry(nil, nil)
+	registry, err := tools.NewRegistry(nil, py)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,3 +783,159 @@ func mustUUID(t *testing.T, s string) uuid.UUID {
 	}
 	return id
 }
+
+func TestAutoTitle(t *testing.T) {
+	e := newEnv(t)
+	e.signup("title@example.com")
+	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	if on := e.must(200, "GET", "/api/settings", nil)["auto_title"]; on != true {
+		t.Fatalf("auto_title should default on, got %v", on)
+	}
+	e.llm.title = "<think>hm</think>\n\"Launch Codes.\""
+
+	chatID := e.must(201, "POST", "/api/chats", nil)["chat"].(map[string]any)["id"].(string)
+	before := e.available()
+	_, ev := e.sendMessage(chatID, "what is the secret launch code")
+	var titled string
+	for _, x := range ev {
+		if x.Name == "title" {
+			titled = x.Data["title"].(string)
+		}
+	}
+	if titled != "Launch Codes" || last(ev).Name != "done" {
+		t.Fatalf("title event %q, events %v", titled, ev)
+	}
+	// The reply (1000 + 200) and the title (100 + 20) are both billed.
+	if spent := before - e.available(); spent != 1200+120 {
+		t.Fatalf("charged %d", spent)
+	}
+	chat := e.must(200, "GET", "/api/chats/"+chatID, nil)["chat"].(map[string]any)
+	if chat["title"] != "Launch Codes" {
+		t.Fatalf("title not stored: %v", chat)
+	}
+
+	// Renaming keeps the chat's place in the list; a new message moves it up.
+	renamed := e.must(200, "PATCH", "/api/chats/"+chatID, map[string]string{"title": "mine"})["chat"].(map[string]any)
+	if renamed["updated_at"] != chat["updated_at"] {
+		t.Fatalf("rename bumped the chat: %v -> %v", chat["updated_at"], renamed["updated_at"])
+	}
+	e.sendMessage(chatID, "again")
+	after := e.must(200, "GET", "/api/chats/"+chatID, nil)["chat"].(map[string]any)
+	if after["title"] != "mine" || after["updated_at"] == chat["updated_at"] {
+		t.Fatalf("second message: %v", after)
+	}
+
+	// Switched off, a new chat keeps its first words.
+	if on := e.must(200, "PUT", "/api/settings", map[string]any{"auto_title": false})["auto_title"]; on != false {
+		t.Fatalf("auto_title not saved: %v", on)
+	}
+	chatID = e.must(201, "POST", "/api/chats", nil)["chat"].(map[string]any)["id"].(string)
+	e.sendMessage(chatID, "plain title please")
+	if got := e.must(200, "GET", "/api/chats/"+chatID, nil)["chat"].(map[string]any)["title"]; got != "plain title please" {
+		t.Fatalf("title with auto_title off: %v", got)
+	}
+}
+
+func TestCleanTitle(t *testing.T) {
+	for in, want := range map[string]string{
+		"Launch Codes":                     "Launch Codes",
+		"Title: **Rust lifetimes**.":       "Rust lifetimes",
+		"\n\n“Paris trip”\nextra":          "Paris trip",
+		"<think>long thought</think>Taxes": "Taxes",
+		"<think>never closed":              "",
+		"":                                 "",
+	} {
+		if got := cleanTitle(in); got != want {
+			t.Errorf("cleanTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// fakePython hands back each input upper-cased as out-<name>, and a chart
+// when the code is "chart".
+type fakePython struct {
+	mu sync.Mutex
+	in []tools.File
+}
+
+func (f *fakePython) Run(_ context.Context, code string, in []tools.File) (tools.PythonResult, error) {
+	f.mu.Lock()
+	f.in = in
+	f.mu.Unlock()
+	res := tools.PythonResult{Stdout: "ran"}
+	for _, x := range in {
+		res.Files = append(res.Files, tools.File{Name: "out-" + x.Name, Data: bytes.ToUpper(x.Data)})
+	}
+	if code == "chart" {
+		var buf bytes.Buffer
+		pngenc.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 30, 20)))
+		res.Files = append(res.Files, tools.File{Name: "chart.png", Data: buf.Bytes()})
+	}
+	return res, nil
+}
+func (f *fakePython) About() string               { return "" }
+func (f *fakePython) Close(context.Context) error { return nil }
+func (f *fakePython) inputs() []tools.File        { f.mu.Lock(); defer f.mu.Unlock(); return f.in }
+
+func TestPythonFilesInAndOut(t *testing.T) {
+	py := &fakePython{}
+	e := newEnvWith(t, py)
+	e.signup("py@example.com")
+	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	chatID := e.must(201, "POST", "/api/chats", map[string]string{"model": "hands"})["chat"].(map[string]any)["id"].(string)
+
+	// A binary file can be attached when python can open it; the model is
+	// told it's there rather than shown it.
+	bin := e.upload("data.bin", []byte("secret payload\x00"))
+	status, ev := e.sendMessage(chatID, `py {"code":"chart","files":["data.bin"]}`, bin["id"].(string))
+	if status != 200 || last(ev).Name != "done" {
+		t.Fatalf("send: %d %v", status, ev)
+	}
+	msgs := e.llm.lastMsgs
+	if !strings.Contains(msgs[0].Content, "data.bin") {
+		t.Fatalf("system prompt doesn't list the chat's files: %q", msgs[0].Content)
+	}
+	if in := py.inputs(); len(in) != 1 || in[0].Name != "data.bin" || string(in[0].Data) != "secret payload\x00" {
+		t.Fatalf("python inputs: %v; reply %v", in, last(ev).Data)
+	}
+
+	// Outputs are saved as the user's files and listed on the step.
+	step := last(ev).Data["message"].(map[string]any)["steps"].([]any)[0].(map[string]any)
+	files, _ := step["files"].([]any)
+	if len(files) != 2 {
+		t.Fatalf("step files: %v", step)
+	}
+	out, chart := files[0].(map[string]any), files[1].(map[string]any)
+	if out["name"] != "out-data.bin" || chart["name"] != "chart.png" || chart["image"] != true {
+		t.Fatalf("step files: %v", files)
+	}
+	resp, _ := e.do("GET", "/api/files/"+out["id"].(string)+"/content", nil)
+	if raw, _ := io.ReadAll(resp.Body); string(raw) != "SECRET PAYLOAD\x00" {
+		t.Fatalf("saved file: %q", raw)
+	}
+	if resp, _ := e.do("GET", "/api/files/"+chart["id"].(string)+"/thumbnail", nil); resp.StatusCode != 200 {
+		t.Fatalf("chart thumbnail: %d", resp.StatusCode)
+	}
+	if n := len(e.must(200, "GET", "/api/files", nil)["files"].([]any)); n != 3 {
+		t.Fatalf("want the upload and two saved files, got %d", n)
+	}
+	for _, v := range e.blobs.Keys() {
+		if bytes.Contains(v, []byte("PAYLOAD")) {
+			t.Fatal("plaintext in blob store")
+		}
+	}
+
+	// A later message can open what an earlier run made.
+	e.sendMessage(chatID, `py {"code":"x","files":["chart.png"]}`)
+	if in := py.inputs(); len(in) != 1 || in[0].Name != "chart.png" || !bytes.HasPrefix(in[0].Data, []byte("\x89PNG")) {
+		t.Fatalf("python inputs on the second turn: %v", in)
+	}
+	// An unknown name comes back to the model as an error listing the files.
+	_, ev = e.sendMessage(chatID, `py {"code":"x","files":["nope.txt"]}`)
+	reply := last(ev).Data["message"].(map[string]any)["content"].(string)
+	if !strings.Contains(reply, "nope.txt") || !strings.Contains(reply, "chart.png") {
+		t.Fatalf("reply: %q", reply)
+	}
+}
+
+func lastLine(s string) string { return s[strings.LastIndex(s, "\n")+1:] }

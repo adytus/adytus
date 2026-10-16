@@ -1,0 +1,21 @@
+/* Tailwind is here only to style svelte-streamdown, which ships Tailwind
+   classes. Preflight is left out so the app's own styles aren't reset, and
+   only the library is scanned so no other class name turns into a utility. */
+@layer theme, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities) source(none);
+@source '../node_modules/svelte-streamdown/dist';
+
+/* The tokens svelte-streamdown's shadcn theme uses, on the app's palette. */
+@theme inline {
+	--color-background: var(--black);
+	--color-foreground: var(--paper);
+	--color-card: #0d0d0d;
+	--color-popover: #0d0d0d;
+	--color-muted: #121212;
+	--color-muted-foreground: var(--muted);
+	--color-border: var(--rule);
+	--color-primary: var(--paper);
+	--color-destructive: var(--line-red);
+	--font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}

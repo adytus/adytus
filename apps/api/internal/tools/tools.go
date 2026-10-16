@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -43,9 +44,18 @@ const (
 	PythonID   = "python"
 )
 
+// PythonRunner runs the python tool's code: Gvisor, or a fake in tests.
+type PythonRunner interface {
+	// Run runs code with in copied to InDir.
+	Run(ctx context.Context, code string, in []File) (PythonResult, error)
+	// About tells the model which packages it can import.
+	About() string
+	Close(ctx context.Context) error
+}
+
 // NewRegistry builds the tools that are configured; search and python are
 // left out when their backend is nil.
-func NewRegistry(search *Search, py *Python) (*Registry, error) {
+func NewRegistry(search *Search, py PythonRunner) (*Registry, error) {
 	r := &Registry{}
 
 	calc, err := utils.InferTool(Calculator,
@@ -95,40 +105,79 @@ func NewRegistry(search *Search, py *Python) (*Registry, error) {
 	}
 
 	if py != nil {
-		t, err := utils.InferTool(PythonID,
-			"Run Python 3.12 code and get its printed output. Standard library only, no network or files; each run starts fresh. print() whatever you need to see. Use it for data processing, simulations and precise calculations.",
+		desc := "Run Python 3.12 code and get its printed output. No network; each run starts fresh. print() whatever you need to see. Use it for data processing, simulations and precise calculations. " +
+			"To work on the chat's files, name them in `files`: they are copied to " + InDir + "/<name> before the code runs. " + py.About()
+		desc += fmt.Sprintf(" Files the code writes to %s/ (at most %d, %d MB each) are saved to the user's files and shown in the chat: use this to make images, charts, CSVs and other files for the user, and mention them in your reply by name.", OutDir, MaxOutputFiles, MaxOutputBytes>>20)
+		about := "Runs code the model writes, isolated on this server: no internet, a few seconds per run. It can read the files in a chat and make new ones for you, like resized images or charts."
+		t, err := utils.InferTool(PythonID, desc,
 			func(ctx context.Context, in struct {
-				Code string `json:"code" jsonschema:"description=A complete Python program; print the results"`
+				Code  string   `json:"code" jsonschema:"description=A complete Python program; print the results"`
+				Files []string `json:"files,omitempty" jsonschema:"description=Names of the chat's files to copy into /work/in"`
 			}) (string, error) {
-				res, err := py.Run(ctx, in.Code)
-				if err != nil {
-					return "error: " + err.Error(), nil
-				}
-				var sb strings.Builder
-				sb.WriteString(res.Stdout)
-				if res.Stderr != "" {
-					sb.WriteString("\n[stderr]\n" + res.Stderr)
-				}
-				if res.TimedOut {
-					sb.WriteString("\n[stopped: time limit reached]")
-				} else if res.ExitCode != 0 {
-					fmt.Fprintf(&sb, "\n[exit code %d]", res.ExitCode)
-				}
-				if sb.Len() == 0 {
-					return "(no output; print() the result)", nil
-				}
-				return sb.String(), nil
+				return runPython(ctx, py, in.Code, in.Files)
 			})
 		if err != nil {
 			return nil, err
 		}
 		r.entries = append(r.entries, entry{Info{
 			ID: PythonID, Name: "Python sandbox",
-			Description: "Runs code the model writes, isolated on this server: no internet, no files, a few seconds per run.",
+			Description: about,
 			DefaultOn:   true,
 		}, t})
 	}
 	return r, nil
+}
+
+// runPython runs code with the named files and saves what it writes.
+func runPython(ctx context.Context, py PythonRunner, code string, names []string) (string, error) {
+	ws := workspaceFrom(ctx)
+	var in []File
+	total := 0
+	for _, name := range names {
+		if ws == nil {
+			return "error: there are no files in this chat", nil
+		}
+		data, err := ws.Read(ctx, name)
+		if err != nil {
+			return fmt.Sprintf("error: %s: %s; the chat's files are: %s", name, err, strings.Join(ws.Names(), ", ")), nil
+		}
+		if total += len(data); total > MaxInputBytes {
+			return fmt.Sprintf("error: the files are too large together (max %d MB)", MaxInputBytes>>20), nil
+		}
+		in = append(in, File{path.Base(name), data})
+	}
+	res, err := py.Run(ctx, code, in)
+	if err != nil {
+		return "error: " + err.Error(), nil
+	}
+	var sb strings.Builder
+	sb.WriteString(res.Stdout)
+	if res.Stderr != "" {
+		sb.WriteString("\n[stderr]\n" + res.Stderr)
+	}
+	if res.TimedOut {
+		sb.WriteString("\n[stopped: time limit reached]")
+	} else if res.ExitCode != 0 {
+		fmt.Fprintf(&sb, "\n[exit code %d]", res.ExitCode)
+	}
+	for _, f := range res.Files {
+		if ws == nil {
+			sb.WriteString("\n[files were not saved: no place to save them]")
+			break
+		}
+		saved, err := ws.Save(ctx, f.Name, f.Data)
+		if err != nil {
+			fmt.Fprintf(&sb, "\n[%s not saved: %s]", f.Name, err)
+			continue
+		}
+		recordSaved(ctx, saved)
+		fmt.Fprintf(&sb, "\n[saved %s (%d bytes); it is shown to the user]", saved.Name, saved.Size)
+	}
+	sb.WriteString(res.Note)
+	if sb.Len() == 0 {
+		return "(no output; print() the result)", nil
+	}
+	return sb.String(), nil
 }
 
 func (r *Registry) Infos() []Info {
@@ -168,6 +217,17 @@ type Step struct {
 	Output string `json:"output,omitempty"`
 	Done   bool   `json:"done"`
 	Millis int64  `json:"ms,omitempty"`
+	// Files are files the call saved for the user.
+	Files []Saved `json:"files,omitempty"`
+}
+
+type savedKey struct{}
+
+// recordSaved notes a saved file on the step of the call running under ctx.
+func recordSaved(ctx context.Context, f Saved) {
+	if files, ok := ctx.Value(savedKey{}).(*[]Saved); ok {
+		*files = append(*files, f)
+	}
 }
 
 // Observer is told about each call as it starts and finishes.
@@ -203,12 +263,15 @@ func (o *observed) InvokableRun(ctx context.Context, args string, opts ...tool.O
 		o.observe(step)
 	}
 	start := time.Now()
+	var saved []Saved
+	ctx = context.WithValue(ctx, savedKey{}, &saved)
 	out, err := o.InvokableTool.InvokableRun(ctx, args, opts...)
 	if err != nil {
 		// Errors go back to the model as text so it can recover.
 		out, err = "error: "+err.Error(), nil
 	}
 	step.Output, step.Done, step.Millis = truncate(out, maxStepOutput), true, time.Since(start).Milliseconds()
+	step.Files = saved
 	if o.observe != nil {
 		o.observe(step)
 	}

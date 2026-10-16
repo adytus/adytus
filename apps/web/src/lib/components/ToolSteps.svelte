@@ -1,8 +1,15 @@
 <script lang="ts">
-	import type { ToolStep } from '../api.ts';
+	import { api, bytes, type ToolStep } from '../api.ts';
 
-	// The tool calls behind a reply, drawn as stops along a line.
-	let { steps, color = 'var(--line-purple)' }: { steps: ToolStep[]; color?: string } = $props();
+	// The tool calls behind a reply, drawn as stops along a line. Files a
+	// tool saved show under its stop; onview opens an image in the viewer.
+	let {
+		steps,
+		color = 'var(--line-purple)',
+		onview
+	}: { steps: ToolStep[]; color?: string; onview?: (id: string) => void } = $props();
+
+	let noThumb = $state<Record<string, boolean>>({});
 
 	const labels: Record<string, string> = {
 		calculator: 'Calculated',
@@ -65,6 +72,22 @@
 				</div>
 			</details>
 			{#if s.tool === 'python' && !s.done}<pre class="code peek">{arg}</pre>{/if}
+			{#if s.files?.length}
+				<ul class="made">
+					{#each s.files as f (f.id)}
+						<li>
+							{#if f.image && !noThumb[f.id]}
+								<button type="button" class="thumb" onclick={() => onview?.(f.id)} aria-label="View {f.name}">
+									<img src={api.thumbURL(f.id)} alt="" loading="lazy" onerror={() => (noThumb[f.id] = true)} />
+								</button>
+							{/if}
+							<a class="file" href={api.fileURL(f.id)} download={f.name}>
+								<span class="name">{f.name}</span><span class="size">{bytes(f.size)}</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		</li>
 	{/each}
 </ol>
@@ -182,5 +205,54 @@
 	}
 	.links a {
 		color: var(--paper);
+	}
+	.made {
+		list-style: none;
+		margin: 0.375rem 0 0;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.made li {
+		display: grid;
+		gap: 0.25rem;
+		max-width: 10rem;
+	}
+	.thumb {
+		display: block;
+		padding: 0;
+		border: 0;
+		border-radius: 6px;
+		overflow: hidden;
+		background: #0a0a0a;
+		cursor: zoom-in;
+		border-bottom: 3px solid var(--c);
+	}
+	.thumb img {
+		display: block;
+		width: 10rem;
+		height: 7.5rem;
+		object-fit: cover;
+	}
+	.file {
+		display: flex;
+		gap: 0.375rem;
+		align-items: baseline;
+		font-size: 0.8125rem;
+		color: var(--paper);
+		min-width: 0;
+	}
+	.file .name {
+		font-weight: 600;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+	}
+	.file .size {
+		flex: none;
+		font-size: 0.75rem;
+		color: var(--muted);
 	}
 </style>

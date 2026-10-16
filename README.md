@@ -36,6 +36,18 @@ The API reads its config from the environment. In bash or zsh, load `.env` with 
 
 The LLM defaults to a local Ollama (`LLM_PROVIDER=ollama`), priced like OpenRouter models in `models.ollama.json` so budgeting behaves the same. Ollama's context window is set server-wide by `OLLAMA_CONTEXT_LENGTH` in `compose.yaml` (its OpenAI-compatible API can't set it per request); keep it equal to `context_tokens` in the catalog. Switch to OpenRouter in `.env`; every OpenRouter request is sent with `provider.data_collection=deny` and `zdr=true`.
 
+## Python sandbox
+
+The model's Python tool runs each call in a throwaway container under [gVisor](https://gvisor.dev) (`runsc`), with numpy, scipy, Pillow and matplotlib. Containers have no network, a read-only root, no capabilities and an unprivileged user; a few are started ahead of time (`PYTHON_WARM`). The chat's files are copied into `/work/in`, and files the code writes to `/work/out` are saved to the user's files. Set it up with:
+
+```sh
+# install runsc (https://gvisor.dev/docs/user_guide/install/), then:
+sudo runsc install && sudo systemctl restart docker
+docker build -t adytus-sandbox deploy/sandbox
+```
+
+The API uses the `runsc` runtime and won't start if Docker doesn't have it. On a dev machine without gVisor, `PYTHON_RUNTIME=runc` runs the same containers under plain Docker, which shares the host kernel with model-written code; the API logs a warning when it does. `PYTHON_ENABLED=false` turns the tool off. Packages are pinned in `deploy/sandbox/requirements.txt` and installed at build time; code can't install anything at run time. The API drives containers through the `docker` CLI, so its user needs access to the Docker daemon, which is root-equivalent on that host.
+
 ## Tests
 
 ```sh
@@ -45,3 +57,5 @@ cd apps/web && bun run check
 ```
 
 Integration tests drop and recreate the schema of the database they're given, so point them at a throwaway one.
+
+The sandbox tests need Docker, the `adytus-sandbox` image and `runsc`, and skip without them; `PYTHON_RUNTIME=runc` runs them under plain Docker.

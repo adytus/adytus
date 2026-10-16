@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -57,10 +55,11 @@ func run() error {
 		return err
 	}
 
-	registry, err := buildTools(ctx, cfg)
+	registry, closeTools, err := buildTools(ctx, cfg)
 	if err != nil {
 		return err
 	}
+	defer closeTools()
 
 	sessions := session.NewStore(cfg.SessionTTL, cfg.SessionIdle)
 	go sessions.Run(ctx, time.Minute)
@@ -90,30 +89,42 @@ func run() error {
 	return srv.App.Listen(cfg.Addr)
 }
 
-// buildTools sets up the tools whose backends are configured. A missing
-// Python interpreter only disables that tool, so a fresh checkout still runs.
-func buildTools(ctx context.Context, cfg *config.Config) (*tools.Registry, error) {
+// buildTools sets up the tools whose backends are configured. Without the
+// configured docker runtime the API won't start unless PYTHON_ENABLED=false.
+// The returned func releases the sandbox.
+func buildTools(ctx context.Context, cfg *config.Config) (*tools.Registry, func(), error) {
 	var search *tools.Search
 	if cfg.SearxngURL != "" {
 		search = tools.NewSearch(cfg.SearxngURL)
 	}
-	var py *tools.Python
-	if cfg.PythonWasm != "" {
-		p, err := tools.NewPython(ctx, tools.PythonConfig{
-			WasmPath: cfg.PythonWasm,
+	var py tools.PythonRunner
+	if cfg.PythonEnabled {
+		p, err := tools.NewGvisor(ctx, tools.GvisorConfig{
+			Image:    cfg.PythonImage,
+			Runtime:  cfg.PythonRuntime,
 			Timeout:  cfg.PythonTimeout,
-			MemoryMB: uint32(cfg.PythonMemoryMB),
+			MemoryMB: cfg.PythonMemoryMB,
+			CPUs:     cfg.PythonCPUs,
 			MaxOut:   16 << 10,
 			Parallel: cfg.PythonParallel,
+			Warm:     cfg.PythonWarm,
 		})
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			slog.Warn("python sandbox disabled: interpreter not found; run scripts/fetch-python-wasm.sh", "path", cfg.PythonWasm)
-		case err != nil:
-			return nil, err
-		default:
-			py = p
+		if err != nil {
+			return nil, nil, err
+		}
+		py = p
+	}
+	closePy := func() {
+		if py != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = py.Close(ctx)
 		}
 	}
-	return tools.NewRegistry(search, py)
+	reg, err := tools.NewRegistry(search, py)
+	if err != nil {
+		closePy()
+		return nil, nil, err
+	}
+	return reg, closePy, nil
 }

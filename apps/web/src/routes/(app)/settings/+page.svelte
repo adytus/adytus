@@ -8,11 +8,13 @@
 	let loaded = $state(false);
 	let error = $state('');
 	let saving = $state('');
+	let autoTitle = $state(true);
 
 	$effect(() => {
 		api.settings().then(
 			(r) => {
 				tools = r.tools;
+				autoTitle = r.auto_title;
 				loaded = true;
 			},
 			(err) => (error = err instanceof ApiError ? err.message : 'Settings could not be loaded.')
@@ -34,6 +36,21 @@
 		}
 	}
 
+	async function toggleAutoTitle() {
+		error = '';
+		saving = 'auto_title';
+		const want = !autoTitle;
+		autoTitle = want; // optimistic; reverted on failure
+		try {
+			autoTitle = (await api.setAutoTitle(want)).auto_title;
+		} catch (err) {
+			autoTitle = !want;
+			error = err instanceof ApiError ? err.message : 'The change was not saved.';
+		} finally {
+			saving = '';
+		}
+	}
+
 	const glyphs: Record<string, { mark: string; line: string }> = {
 		calculator: { mark: '=', line: 'var(--line-blue)' },
 		web_search: { mark: '?', line: 'var(--line-yellow)' },
@@ -47,16 +64,45 @@
 		<h1>Settings</h1>
 	</header>
 
+	{#if error}
+		<Alert title="Settings not saved" ondismiss={() => (error = '')}><p>{error}</p></Alert>
+	{/if}
+
+	<section aria-labelledby="chats-h">
+		<h2 id="chats-h">Chats</h2>
+		{#if loaded}
+			<ul class="tools">
+				<li class="tool">
+					<span class="glyph" style:--line="var(--line-purple)" aria-hidden="true">Aa</span>
+					<div class="about">
+						<p class="name" id="auto-title">Name chats automatically</p>
+						<p class="desc">
+							After your first message, the chat's model writes a short title for it. It's charged
+							like a tiny reply. Off, a chat is named after the start of your first message.
+						</p>
+					</div>
+					<button
+						class="switch"
+						role="switch"
+						aria-checked={autoTitle}
+						aria-labelledby="auto-title"
+						disabled={saving === 'auto_title'}
+						onclick={toggleAutoTitle}
+					>
+						<span class="knob"></span>
+						<span class="state">{autoTitle ? 'On' : 'Off'}</span>
+					</button>
+				</li>
+			</ul>
+		{/if}
+	</section>
+
 	<section aria-labelledby="tools-h">
 		<h2 id="tools-h">Tools</h2>
 		<p class="muted">
 			Models that support tools can call these while writing a reply. You'll see each call in the
 			chat, and the extra model time is charged like any other reply.
 		</p>
-
-		{#if error}
-			<Alert title="Settings not saved" ondismiss={() => (error = '')}><p>{error}</p></Alert>
-		{/if}
 
 		{#if loaded}
 			<ul class="tools">

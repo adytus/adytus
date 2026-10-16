@@ -1,4 +1,10 @@
+import { compareDesc } from 'date-fns';
 import { api, type Balance, type Chat, type Model, type User, type Attachment } from './api.ts';
+
+// The API sends local-offset times and the browser writes UTC ones, so chats
+// are ordered by the instant, not the string.
+const newestFirst = (chats: Chat[]) =>
+	chats.sort((a, b) => compareDesc(new Date(a.updated_at), new Date(b.updated_at)));
 
 // One shared store for the signed-in shell. Pages mutate it after API calls
 // so the rail and fare card stay current without refetching everything.
@@ -22,7 +28,7 @@ class AppState {
 		]);
 		this.user = user;
 		this.balance = balance;
-		this.chats = chats;
+		this.chats = newestFirst(chats);
 		this.models = models.models;
 		this.defaultModel = models.default;
 	}
@@ -33,7 +39,7 @@ class AppState {
 
 	upsertChat(chat: Chat) {
 		const rest = this.chats.filter((c) => c.id !== chat.id);
-		this.chats = [chat, ...rest].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+		this.chats = newestFirst([chat, ...rest]);
 	}
 
 	removeChat(id: string) {

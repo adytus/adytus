@@ -177,8 +177,11 @@ func (s *Store) Children(ctx context.Context, userID, parentID uuid.UUID) ([]*Ob
 		ORDER BY id`, userID, parentID)
 }
 
+// UpdateCiphertext replaces an object's contents. It leaves updated_at
+// alone: renaming a chat is not activity, so it shouldn't move the chat up
+// the list. Touch marks activity.
 func UpdateCiphertext(ctx context.Context, q DBTX, id uuid.UUID, ciphertext []byte) error {
-	_, err := q.Exec(ctx, `UPDATE objects SET ciphertext = $2, updated_at = now() WHERE id = $1`, id, ciphertext)
+	_, err := q.Exec(ctx, `UPDATE objects SET ciphertext = $2 WHERE id = $1`, id, ciphertext)
 	return err
 }
 
@@ -230,7 +233,11 @@ func (s *Store) Tx(ctx context.Context, fn func(pgx.Tx) error) error {
 
 type Settings struct {
 	Tools map[string]bool `json:"tools"`
+	// AutoTitle has the model name new chats; nil means on.
+	AutoTitle *bool `json:"auto_title,omitempty"`
 }
+
+func (st Settings) AutoTitleOn() bool { return st.AutoTitle == nil || *st.AutoTitle }
 
 func (s *Store) Settings(ctx context.Context, userID uuid.UUID) (Settings, error) {
 	var st Settings

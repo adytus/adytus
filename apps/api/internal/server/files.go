@@ -93,22 +93,30 @@ func (s *Server) uploadFile(c fiber.Ctx) error {
 	if mt == "" {
 		mt = mime.TypeByExtension(filepath.Ext(name))
 	}
-	meta := fileMeta{Name: name, Mime: mt, Size: int64(len(data)), Text: isText(data), Image: imageprep.Detect(data)}
-
 	a := mustAuth(c)
 	o, dek, err := vault.New(a.MK, nil, a.UserID, store.KindFile, uuid.NullUUID{})
 	if err != nil {
 		return err
 	}
 	defer crypto.Zero(dek)
-
-	sealed, err := vault.SealBytes(dek, o.ID, data)
+	meta, err := s.storeFile(c.Context(), o, dek, name, mt, data)
 	if err != nil {
 		return err
 	}
-	key := "u/" + a.UserID.String() + "/" + o.ID.String()
-	if err := s.Blobs.Put(c.Context(), key, sealed); err != nil {
-		return errs.Upstream.Wrap(err, "storage unavailable")
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"file": viewFile(o, meta)})
+}
+
+// storeFile encrypts data into the new file object o and stores it, with a
+// preview for images.
+func (s *Server) storeFile(ctx context.Context, o *store.Object, dek []byte, name, mt string, data []byte) (fileMeta, error) {
+	meta := fileMeta{Name: name, Mime: mt, Size: int64(len(data)), Text: isText(data), Image: imageprep.Detect(data)}
+	sealed, err := vault.SealBytes(dek, o.ID, data)
+	if err != nil {
+		return meta, err
+	}
+	key := "u/" + o.UserID.String() + "/" + o.ID.String()
+	if err := s.Blobs.Put(ctx, key, sealed); err != nil {
+		return meta, errs.Upstream.Wrap(err, "storage unavailable")
 	}
 	o.S3Key = null.StringFrom(key)
 
@@ -118,7 +126,7 @@ func (s *Server) uploadFile(c fiber.Ctx) error {
 		if thumb, err := imageprep.Thumbnail(data); err == nil {
 			sealedThumb, err := vault.SealPart(dek, o.ID, "thumb", thumb)
 			if err == nil {
-				err = s.Blobs.Put(c.Context(), thumbKey(key), sealedThumb)
+				err = s.Blobs.Put(ctx, thumbKey(key), sealedThumb)
 			}
 			if err != nil {
 				slog.Warn("store thumbnail", "err", err)
@@ -128,16 +136,16 @@ func (s *Server) uploadFile(c fiber.Ctx) error {
 		}
 	}
 	if o.Ciphertext, err = vault.Seal(dek, o.ID, meta); err != nil {
-		return err
+		return meta, err
 	}
-	if err := s.Store.InsertObject(c.Context(), o); err != nil {
+	if err := s.Store.InsertObject(ctx, o); err != nil {
 		_ = s.Blobs.Delete(context.Background(), key)
 		if meta.Thumb {
 			_ = s.Blobs.Delete(context.Background(), thumbKey(key))
 		}
-		return err
+		return meta, err
 	}
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"file": viewFile(o, meta)})
+	return meta, nil
 }
 
 // readFile loads and decrypts one of the user's files.

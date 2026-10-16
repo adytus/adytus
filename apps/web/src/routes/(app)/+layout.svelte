@@ -7,6 +7,8 @@
 	import ModelIcon from '#lib/components/ModelIcon.svelte';
 	import Alert from '#lib/components/Alert.svelte';
 	import type { LayoutProps } from './$types';
+	import { differenceInCalendarDays, format, isThisYear, isToday, isYesterday } from 'date-fns';
+	import type { Chat } from '#lib/api.ts';
 
 	let { children }: LayoutProps = $props();
 	let ready = $state(false);
@@ -34,6 +36,34 @@
 		app.clear();
 		goto('/login');
 	}
+
+	// Re-read the clock each minute so chats roll into Yesterday at midnight.
+	let now = $state(new Date());
+	$effect(() => {
+		const t = setInterval(() => (now = new Date()), 60_000);
+		return () => clearInterval(t);
+	});
+
+	function dayGroup(at: Date): string {
+		if (isToday(at)) return 'Today';
+		if (isYesterday(at)) return 'Yesterday';
+		const days = differenceInCalendarDays(now, at);
+		if (days < 7) return 'Previous 7 days';
+		if (days < 30) return 'Previous 30 days';
+		return format(at, isThisYear(at) ? 'MMMM' : 'MMMM yyyy');
+	}
+
+	// Chats are already newest first, so groups come out in order.
+	const groups = $derived.by(() => {
+		void now;
+		const out: { label: string; chats: Chat[] }[] = [];
+		for (const c of app.chats) {
+			const label = dayGroup(new Date(c.updated_at));
+			if (out.at(-1)?.label !== label) out.push({ label, chats: [] });
+			out.at(-1)!.chats.push(c);
+		}
+		return out;
+	});
 
 	const activeChat = $derived(page.params.id);
 	const here = (path: string) => (page.url.pathname.startsWith(path) ? 'page' : undefined);
@@ -68,18 +98,21 @@
 			<a class="wordmark desktop" href="/chat">ADYTUS</a>
 			<a class="btn primary new" href="/chat">New chat</a>
 
-			<h2 class="group">Chats</h2>
+			<h2 class="sr-only">Chats</h2>
 			<div class="chats">
-				{#each app.chats as c (c.id)}
-					<a
-						href="/chat/{c.id}"
-						class="chat"
-						class:active={activeChat === c.id}
-						aria-current={activeChat === c.id ? 'page' : undefined}
-					>
-						<ModelIcon icon={app.model(c.model)?.icon} size={1.125} />
-						<span class="title">{c.title || 'Untitled chat'}</span>
-					</a>
+				{#each groups as g (g.label)}
+					<h3 class="group">{g.label}</h3>
+					{#each g.chats as c (c.id)}
+						<a
+							href="/chat/{c.id}"
+							class="chat"
+							class:active={activeChat === c.id}
+							aria-current={activeChat === c.id ? 'page' : undefined}
+						>
+							<ModelIcon icon={app.model(c.model)?.icon} size={1.125} />
+							<span class="title">{c.title || 'Untitled chat'}</span>
+						</a>
+					{/each}
 				{:else}
 					<p class="empty">Chats you start appear here.</p>
 				{/each}
@@ -153,20 +186,27 @@
 		text-decoration: none;
 	}
 	.group {
-		margin: 0.25rem 0 -0.5rem;
+		margin: 0.875rem 0 0.25rem;
 		padding: 0 0.5rem;
 		font-size: 0.75rem;
 		font-weight: 700;
 		color: var(--muted);
 	}
+	.group:first-child {
+		margin-top: 0.25rem;
+	}
 	.chats {
 		flex: 1;
 		overflow-y: auto;
+		overflow-x: hidden;
 		display: grid;
+		/* minmax(0, …) so a long title truncates instead of widening the rail. */
+		grid-template-columns: minmax(0, 1fr);
 		align-content: start;
 		gap: 2px;
 	}
 	.chat {
+		min-width: 0;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
@@ -186,6 +226,7 @@
 	}
 	.title {
 		flex: 1;
+		min-width: 0;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

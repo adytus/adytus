@@ -39,7 +39,17 @@ export type Chat = {
 	updated_at: string;
 };
 export type Usage = { prompt_tokens: number; completion_tokens: number; cost_micros: number };
-export type ToolStep = { id: string; tool: string; input: string; output?: string; done: boolean; ms?: number };
+// SavedFile is a file a tool saved to the user's files.
+export type SavedFile = { id: string; name: string; image?: boolean; size: number };
+export type ToolStep = {
+	id: string;
+	tool: string;
+	input: string;
+	output?: string;
+	done: boolean;
+	ms?: number;
+	files?: SavedFile[];
+};
 export type Tool = {
 	id: string;
 	name: string;
@@ -48,7 +58,8 @@ export type Tool = {
 	default_on: boolean;
 	enabled: boolean;
 };
-export type Attachment = { id: string; name: string; image?: boolean };
+// python marks a file the model isn't shown but the python tool can open.
+export type Attachment = { id: string; name: string; image?: boolean; python?: boolean };
 export type Message = {
 	id: string;
 	role: 'user' | 'assistant';
@@ -164,12 +175,16 @@ export const api = {
 	thumbURL: (id: string) => `/api/files/${id}/thumbnail`,
 	viewURL: (id: string) => `/api/files/${id}/view`,
 
-	settings: () => get<{ tools: Tool[] }>('/api/settings'),
-	setTool: (id: string, on: boolean) => call<{ tools: Tool[] }>('PUT', '/api/settings', { tools: { [id]: on } })
+	settings: () => get<Settings>('/api/settings'),
+	setTool: (id: string, on: boolean) => call<Settings>('PUT', '/api/settings', { tools: { [id]: on } }),
+	setAutoTitle: (on: boolean) => call<Settings>('PUT', '/api/settings', { auto_title: on })
 };
+
+export type Settings = { tools: Tool[]; auto_title: boolean };
 
 export type StreamHandlers = {
 	start?: (d: { user_message_id: string; message_id: string; title: string; hold_micros: number }) => void;
+	title?: (d: { title: string }) => void;
 	delta?: (d: { text: string }) => void;
 	reasoning?: (d: { text: string }) => void;
 	tool?: (d: ToolStep) => void;
