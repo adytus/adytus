@@ -1,9 +1,9 @@
 package server
 
 import (
+	"sync"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/limiter"
@@ -20,11 +20,11 @@ import (
 )
 
 type Deps struct {
-	Config   *config.Config
-	Store    *store.Store
-	Ledger   *billing.Ledger
-	Catalog  *llm.Catalog
-	LLM      model.ToolCallingChatModel
+	Config *config.Config
+	Store  *store.Store
+	Ledger *billing.Ledger
+	// LLM is the live model catalog and providers; see SeedLLM and ReloadLLM.
+	LLM      *llm.Registry
 	Payments billing.Gateway
 	Sessions *session.Store
 	Blobs    blob.Store
@@ -36,6 +36,8 @@ type Server struct {
 	App *fiber.App
 	// kdfSlots bounds concurrent Argon2id runs (64 MiB each).
 	kdfSlots chan struct{}
+	// llmMu orders backoffice changes, so swaps land in commit order.
+	llmMu sync.Mutex
 }
 
 type structValidator struct{ v *validator.Validate }
@@ -110,6 +112,8 @@ func (s *Server) routes() {
 	me.Get("/files/:id/view", s.viewImage)
 	me.Delete("/files/:id", s.deleteFile)
 	me.Put("/files/:id/offline", s.setFileOffline)
+
+	s.backofficeRoutes(me)
 }
 
 func (s *Server) health(c fiber.Ctx) error {
@@ -120,7 +124,8 @@ func (s *Server) health(c fiber.Ctx) error {
 }
 
 func (s *Server) listModels(c fiber.Ctx) error {
-	return c.JSON(fiber.Map{"models": s.Catalog.Models, "default": s.Catalog.Default().ID})
+	cat := s.LLM.Current().Catalog
+	return c.JSON(fiber.Map{"models": cat.Models, "default": cat.Default().ID})
 }
 
 func (s *Server) listPlans(c fiber.Ctx) error {

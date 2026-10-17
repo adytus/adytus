@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/flow/agent/react"
 	"github.com/cloudwego/eino/schema"
@@ -130,9 +131,9 @@ func (s *Server) listChats(c fiber.Ctx) error {
 
 func (s *Server) modelOrDefault(id string) (llm.Model, error) {
 	if id == "" {
-		return s.Catalog.Default(), nil
+		return s.LLM.Current().Catalog.Default(), nil
 	}
-	m, ok := s.Catalog.Get(id)
+	m, ok := s.LLM.Current().Catalog.Get(id)
 	if !ok {
 		return m, errs.Validation.New("model %q is not available", id)
 	}
@@ -395,7 +396,10 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	spec, ok := s.Catalog.Get(meta.Model)
+	// One snapshot for the whole reply, so a backoffice change mid-stream
+	// doesn't switch providers under it.
+	snap := s.LLM.Current()
+	spec, ok := snap.Catalog.Get(meta.Model)
 	if !ok {
 		return errs.Validation.New("this chat's model is no longer available; pick another")
 	}
@@ -501,7 +505,8 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	// Hold the worst case for the first call (estimated prompt, tool
 	// definitions and a full-length reply) now, so a lack of credit is a
 	// plain 402.
-	mm := meter.New(s.LLM, s.Ledger, a.UserID, spec)
+	chatModel := snap.ChatModel(spec)
+	mm := meter.New(chatModel, s.Ledger, a.UserID, spec)
 	reserver := mm
 	if len(toolIDs) > 0 {
 		infos, err := s.Tools.ToolInfos(ctx, toolIDs)
@@ -568,7 +573,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 			titleCtx, cancelTitle := context.WithTimeout(ctx, 30*time.Second)
 			defer cancelTitle()
 			go func() {
-				t := s.generateTitle(titleCtx, userID, spec, req.Content)
+				t := s.generateTitle(titleCtx, chatModel, userID, spec, req.Content)
 				if t != "" {
 					_ = send("title", fiber.Map{"title": t})
 				}
@@ -761,11 +766,11 @@ func (s *Server) storeReply(ctx context.Context, chatID uuid.UUID, p *preparedRe
 // generateTitle asks the chat's model to name a chat that opens with
 // content. The call is metered and billed like any other; on failure it
 // returns "" and the chat keeps its stand-in title.
-func (s *Server) generateTitle(ctx context.Context, userID uuid.UUID, spec llm.Model, content string) string {
+func (s *Server) generateTitle(ctx context.Context, chatModel model.ToolCallingChatModel, userID uuid.UUID, spec llm.Model, content string) string {
 	if r := []rune(content); len(r) > 2000 {
 		content = string(r[:2000])
 	}
-	mm := meter.New(s.LLM, s.Ledger, userID, spec)
+	mm := meter.New(chatModel, s.Ledger, userID, spec)
 	out, err := mm.Generate(ctx, []*schema.Message{
 		schema.SystemMessage("You name chats. Reply with a title of 2 to 6 words for a chat that opens with the user's message below, in the message's language. Reply with the title only: no quotes, no markdown, no final period."),
 		schema.UserMessage(content),

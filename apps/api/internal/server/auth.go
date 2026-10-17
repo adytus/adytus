@@ -193,7 +193,11 @@ func (s *Server) me(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"user": viewUser(u)})
+	privs, err := s.privileges(c, a)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"user": viewUser(u), "privileges": privs})
 }
 
 // changePassword re-wraps the master key; no object needs re-encrypting.

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -189,7 +190,12 @@ func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 	t.Cleanup(pool.Close)
 
 	serverKey, _ := crypto.NewKey()
+	uiDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(uiDir, "backoffice.js"), []byte("export function mount() {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{
+		BackofficeDir:  uiDir,
 		ServerKey:      serverKey,
 		SystemPrompt:   "sys",
 		ChatPerMinute:  1000,
@@ -203,23 +209,32 @@ func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := llm.NewCatalog(testModels)
-	if err != nil {
-		t.Fatal(err)
-	}
 	fake := &fakeLLM{}
 	blobs := blob.NewMemory()
 	srv := New(Deps{
-		Config:   cfg,
-		Store:    &store.Store{DB: pool},
-		Ledger:   &billing.Ledger{DB: pool, HoldTTL: time.Minute},
-		Catalog:  catalog,
-		LLM:      fake,
+		Config: cfg,
+		Store:  &store.Store{DB: pool},
+		Ledger: &billing.Ledger{DB: pool, HoldTTL: time.Minute},
+		LLM: llm.NewRegistry(func(context.Context, llm.Provider) (model.ToolCallingChatModel, error) {
+			return fake, nil
+		}),
 		Payments: billing.MockGateway{},
 		Sessions: session.NewStore(time.Hour, time.Hour),
 		Blobs:    blobs,
 		Tools:    registry,
 	})
+	models := append([]llm.Model(nil), testModels...)
+	for i := range models {
+		models[i].Provider = llm.Ollama
+	}
+	if err := srv.SeedLLM(ctx, llm.Provider{ID: llm.Ollama}, func() (*llm.Catalog, error) {
+		return llm.NewCatalog(models)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.ReloadLLM(ctx); err != nil {
+		t.Fatal(err)
+	}
 	return &env{t: t, srv: srv, llm: fake, blobs: blobs, pool: pool}
 }
 

@@ -34,11 +34,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	catalog, err := llm.LoadCatalog(cfg.ModelsFile)
-	if err != nil {
-		return err
-	}
-
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -46,11 +41,6 @@ func run() error {
 	defer pool.Close()
 
 	blobs, err := blob.NewS3(ctx, cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3Bucket)
-	if err != nil {
-		return err
-	}
-
-	chatModel, err := llm.NewChatModel(ctx, cfg.LLMProvider, cfg.LLMBaseURL, cfg.LLMAPIKey)
 	if err != nil {
 		return err
 	}
@@ -68,13 +58,23 @@ func run() error {
 		Config:   cfg,
 		Store:    &store.Store{DB: pool},
 		Ledger:   &billing.Ledger{DB: pool, DailyCapMicros: cfg.DailyCapMicros, HoldTTL: cfg.HoldTTL},
-		Catalog:  catalog,
-		LLM:      chatModel,
+		LLM:      llm.NewRegistry(llm.DialOpenAI),
 		Payments: billing.MockGateway{},
 		Sessions: sessions,
 		Blobs:    blobs,
 		Tools:    registry,
 	})
+
+	seed := llm.Provider{ID: cfg.LLMProvider, BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
+	if err := srv.SeedLLM(ctx, seed, func() (*llm.Catalog, error) {
+		return llm.LoadCatalog(cfg.ModelsFile, cfg.LLMProvider)
+	}); err != nil {
+		return err
+	}
+	if err := srv.ReloadLLM(ctx); err != nil {
+		return err
+	}
+	catalog := srv.LLM.Current().Catalog
 
 	go func() {
 		<-ctx.Done()

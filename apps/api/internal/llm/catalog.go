@@ -15,7 +15,9 @@ import (
 // the same as micro-USD per token. Local Ollama models are given prices too,
 // so budgeting behaves exactly as it would against OpenRouter.
 type Model struct {
-	ID                   string  `json:"id"`
+	ID string `json:"id"`
+	// Provider is the endpoint that serves the model: openrouter or ollama.
+	Provider             string  `json:"provider"`
 	Upstream             string  `json:"upstream"`
 	Name                 string  `json:"name"`
 	PromptUSDPerMTok     float64 `json:"prompt_usd_per_mtok"`
@@ -59,9 +61,12 @@ func (m Model) ChargeFor(u Usage) int64 {
 type Catalog struct {
 	Models []Model `json:"models"`
 	byID   map[string]Model
+	def    string
 }
 
-func LoadCatalog(path string) (*Catalog, error) {
+// LoadCatalog reads a catalog file. Models that don't name a provider get
+// the given one.
+func LoadCatalog(path, provider string) (*Catalog, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("model catalog: %w", err)
@@ -69,6 +74,11 @@ func LoadCatalog(path string) (*Catalog, error) {
 	var c Catalog
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return nil, fmt.Errorf("model catalog %s: %w", path, err)
+	}
+	for i := range c.Models {
+		if c.Models[i].Provider == "" {
+			c.Models[i].Provider = provider
+		}
 	}
 	return NewCatalog(c.Models)
 }
@@ -82,6 +92,8 @@ func NewCatalog(models []Model) (*Catalog, error) {
 		switch {
 		case m.ID == "" || m.Upstream == "":
 			return nil, fmt.Errorf("model catalog: id and upstream are required")
+		case !IsProvider(m.Provider):
+			return nil, fmt.Errorf("model catalog: %s: provider must be openrouter or ollama", m.ID)
 		case m.ContextTokens <= 0 || m.MaxOutputTokens <= 0 || m.MaxOutputTokens >= m.ContextTokens:
 			return nil, fmt.Errorf("model catalog: %s: need 0 < max_output_tokens < context_tokens", m.ID)
 		case m.PromptUSDPerMTok < 0 || m.CompletionUSDPerMTok < 0:
@@ -105,7 +117,20 @@ func (c *Catalog) Get(id string) (Model, bool) {
 	return m, ok
 }
 
-func (c *Catalog) Default() Model { return c.Models[0] }
+// Default is the model picked by WithDefault, else the first one.
+func (c *Catalog) Default() Model {
+	if m, ok := c.byID[c.def]; ok {
+		return m
+	}
+	return c.Models[0]
+}
+
+// WithDefault makes id the default model. An unknown id is ignored, so a
+// disabled default falls back to the first model.
+func (c *Catalog) WithDefault(id string) *Catalog {
+	c.def = id
+	return c
+}
 
 var iconColors = []string{"#1e5bff", "#ffc400", "#e8322b", "#7b4bd6", "#2fbf71"}
 

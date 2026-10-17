@@ -118,3 +118,15 @@ func OpenWithDEK(dek []byte, o *store.Object, v any) error {
 	}
 	return json.Unmarshal(raw, v)
 }
+
+func aadProviderKey(id string) []byte { return []byte("llm-provider:" + id + ":key") }
+
+// SealProviderKey seals an upstream API key with the server key.
+func SealProviderKey(serverKey []byte, id, key string) ([]byte, error) {
+	return crypto.Seal(serverKey, []byte(key), aadProviderKey(id))
+}
+
+func OpenProviderKey(serverKey []byte, id string, sealed []byte) (string, error) {
+	key, err := crypto.Open(serverKey, sealed, aadProviderKey(id))
+	return string(key), err
+}

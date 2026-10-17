@@ -19,7 +19,8 @@ type Config struct {
 	ServerKeyB64 string `env:"SERVER_KEY,required"`
 	ServerKey    []byte `env:"-"`
 
-	// LLMProvider is "openrouter" or "ollama".
+	// LLMProvider is "openrouter" or "ollama". These and MODELS_FILE only
+	// seed the database on first start; the backoffice owns them after.
 	LLMProvider  string `env:"LLM_PROVIDER" envDefault:"ollama"`
 	LLMBaseURL   string `env:"LLM_BASE_URL" envDefault:"http://localhost:11434/v1"`
 	LLMAPIKey    string `env:"LLM_API_KEY"`
@@ -56,6 +57,10 @@ type Config struct {
 	PythonMemoryMB int           `env:"PYTHON_MEMORY_MB" envDefault:"256"`
 	PythonParallel int           `env:"PYTHON_PARALLEL" envDefault:"2"`
 	ToolMaxSteps   int           `env:"TOOL_MAX_STEPS" envDefault:"8"`
+
+	// BackofficeDir holds the built backoffice UI (apps/backoffice/dist),
+	// served to admins only.
+	BackofficeDir string `env:"BACKOFFICE_DIR" envDefault:"../backoffice/dist"`
 
 	// KDF is not configurable from the environment; tests lower it.
 	KDF crypto.KDFParams `env:"-"`

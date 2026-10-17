@@ -69,11 +69,12 @@
 	const here = (path: string) => (page.url.pathname.startsWith(path) ? 'page' : undefined);
 
 	// Each section keeps its own line color, as on a metro map.
-	const sections = [
+	const sections = $derived([
 		{ href: '/files', label: 'Files', line: 'var(--line-yellow)' },
 		{ href: '/settings', label: 'Settings', line: 'var(--line-green)' },
-		{ href: '/account', label: 'Account and credit', line: 'var(--line-red)' }
-	];
+		{ href: '/account', label: 'Account and credit', line: 'var(--line-red)' },
+		...(app.can('backoffice') ? [{ href: '/backoffice', label: 'Backoffice', line: 'var(--line-purple)' }] : [])
+	]);
 </script>
 
 {#if failure}

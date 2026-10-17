@@ -130,7 +130,9 @@ export const api = {
 	models: () => get<{ models: Model[]; default: string }>('/api/models'),
 	plans: () => get<{ plans: Plan[] }>('/api/plans'),
 
-	me: () => get<{ user: User }>('/api/me'),
+	// privileges lists what the user may open beyond their own data, e.g.
+	// 'backoffice'. The API enforces each one; this only decides what to show.
+	me: () => get<{ user: User; privileges: string[] }>('/api/me'),
 	signup: (email: string, password: string) =>
 		call<{ user: User; recovery_code: string }>('POST', '/api/auth/signup', { email, password }),
 	login: (email: string, password: string) =>

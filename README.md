@@ -16,7 +16,8 @@ Private, encrypted chatbot for enterprise. An OpenWebUI / chatbot hybrid that wr
 adytus/
   apps/
     api/    Go backend (Fiber v3, pgx, goose, errorx)
-    web/    SvelteKit frontend (Bun)
+    web/         SvelteKit frontend (Bun)
+    backoffice/  admin UI, served by the API to admins only
   docs/
   compose.yaml   Postgres, SeaweedFS (S3) and Ollama for local dev
 ```
@@ -30,11 +31,24 @@ docker compose exec ollama ollama pull qwen2.5vl:3b   # vision, ~3 GB, fits in 8
 cp apps/api/.env.example apps/api/.env     # set SERVER_KEY
 cd apps/api && go run ./cmd/api            # see the env note below; :8080, runs migrations on start
 cd apps/web && bun install && bun run dev  # :5173, proxies /api to :8080
+cd apps/backoffice && bun install && bun run dev  # rebuilds dist/ on change; the API serves it
 ```
 
 The API reads its config from the environment. In bash or zsh, load `.env` with `set -a && . ./.env && set +a` first; that line does not work in fish (use `bash -c 'set -a && . ./.env && set +a && go run ./cmd/api'`).
 
 The LLM defaults to a local Ollama (`LLM_PROVIDER=ollama`), priced like OpenRouter models in `models.ollama.json` so budgeting behaves the same. Ollama's context window is set server-wide by `OLLAMA_CONTEXT_LENGTH` in `compose.yaml` (its OpenAI-compatible API can't set it per request); keep it equal to `context_tokens` in the catalog. Switch to OpenRouter in `.env`; every OpenRouter request is sent with `provider.data_collection=deny` and `zdr=true`.
+
+## Backoffice
+
+Admins set the model whitelist (provider, upstream, prices, limits, default) and the OpenRouter and Ollama URLs and keys for the whole server; changes apply to the next message, without a restart. `LLM_*` and `MODELS_FILE` only seed the database on first start; after that the backoffice owns them. Keys are sealed with `SERVER_KEY` and never sent back, only their last four characters.
+
+There's no UI to grant access. Set the flag by hand:
+
+```sh
+docker compose exec postgres psql -U adytus -c "UPDATE users SET is_admin = true WHERE email = 'you@example.com'"
+```
+
+`GET /api/me` then lists `"privileges": ["backoffice"]` and the rail shows a Backoffice link. The backoffice is its own bundle (`apps/backoffice`, built to `dist/`), not part of the web app: the API serves it from `BACKOFFICE_DIR` at `/api/backoffice/ui/` behind the same admin check as its endpoints, with `Cache-Control: no-store`, and answers 404 to everyone else. The web app only holds a loader that imports it by URL. Admin rights are read from the database on every request, so revoking them is immediate. They give no access to anyone's chats or files.
 
 ## Python sandbox
 
@@ -54,6 +68,7 @@ The API uses the `runsc` runtime and won't start if Docker doesn't have it. On a
 cd apps/api
 TEST_DATABASE_URL='postgres://adytus:adytus@localhost:5432/adytus_test?sslmode=disable' go test -p 1 ./...
 cd apps/web && bun run check
+cd apps/backoffice && bun run check
 ```
 
 Integration tests drop and recreate the schema of the database they're given, so point them at a throwaway one.

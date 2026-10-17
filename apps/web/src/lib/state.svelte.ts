@@ -10,23 +10,29 @@ const newestFirst = (chats: Chat[]) =>
 // so the rail and fare card stay current without refetching everything.
 class AppState {
 	user = $state<User | null>(null);
+	privileges = $state<string[]>([]);
 	balance = $state<Balance | null>(null);
 	chats = $state<Chat[]>([]);
 	models = $state<Model[]>([]);
 	defaultModel = $state('');
+
+	can(privilege: string) {
+		return this.privileges.includes(privilege);
+	}
 
 	model(id: string) {
 		return this.models.find((m) => m.id === id);
 	}
 
 	async load() {
-		const [{ user }, { balance }, { chats }, models] = await Promise.all([
+		const [{ user, privileges }, { balance }, { chats }, models] = await Promise.all([
 			api.me(),
 			api.balance(),
 			api.chats(),
 			api.models()
 		]);
 		this.user = user;
+		this.privileges = privileges;
 		this.balance = balance;
 		this.chats = newestFirst(chats);
 		this.models = models.models;
@@ -48,6 +54,7 @@ class AppState {
 
 	clear() {
 		this.user = null;
+		this.privileges = [];
 		this.balance = null;
 		this.chats = [];
 	}
