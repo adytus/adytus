@@ -49,13 +49,10 @@ func (m Model) Cost(promptTokens, completionTokens int) int64 {
 	return int64(math.Ceil(c))
 }
 
-// ChargeFor picks the amount to bill: the upstream-reported cost when there
-// is one, otherwise the catalog price.
+// ChargeFor picks the amount to bill: the catalog price the user sees, or
+// the upstream-reported cost if that is higher.
 func (m Model) ChargeFor(u Usage) int64 {
-	if u.CostMicros > 0 {
-		return u.CostMicros
-	}
-	return m.Cost(u.PromptTokens, u.CompletionTokens)
+	return max(u.CostMicros, m.Cost(u.PromptTokens, u.CompletionTokens))
 }
 
 type Catalog struct {

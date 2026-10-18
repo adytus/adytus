@@ -28,8 +28,12 @@ func TestCost(t *testing.T) {
 	if got := testModel.Cost(1, 0); got != 1 {
 		t.Fatalf("cost = %d", got)
 	}
-	if got := testModel.ChargeFor(Usage{PromptTokens: 1000, CostMicros: 7}); got != 7 {
-		t.Fatalf("reported cost should win, got %d", got)
+	// The catalog price is what users see, so a lower upstream cost doesn't win.
+	if got := testModel.ChargeFor(Usage{PromptTokens: 1000, CostMicros: 7}); got != 500 {
+		t.Fatalf("catalog price should win, got %d", got)
+	}
+	if got := testModel.ChargeFor(Usage{PromptTokens: 1000, CostMicros: 900}); got != 900 {
+		t.Fatalf("a higher upstream cost should win, got %d", got)
 	}
 }
 

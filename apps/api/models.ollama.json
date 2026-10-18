@@ -14,6 +14,16 @@
       "icon": { "code": "Q3", "color": "#7b4bd6", "shape": "hexagon" }
     },
     {
+      "id": "bonsai-8b",
+      "upstream": "hf.co/vinpix/Bonsai-8B-llama.cpp:Q2_KT",
+      "name": "Bonsai 8B",
+      "prompt_usd_per_mtok": 0.1,
+      "completion_usd_per_mtok": 0.4,
+      "context_tokens": 16384,
+      "max_output_tokens": 2048,
+      "icon": { "code": "B8", "color": "#2e7d5b", "shape": "hexagon" }
+    },
+    {
       "id": "gemma3-270m",
       "upstream": "gemma3:270m",
       "name": "Gemma 3 270M",

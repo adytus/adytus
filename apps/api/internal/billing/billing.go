@@ -11,15 +11,17 @@ import (
 const MicrosPerUSD = 1_000_000
 
 type Plan struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	PriceMicros  int64  `json:"price_micros"`
-	CreditMicros int64  `json:"credit_micros"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	PriceMicros int64  `json:"price_micros"`
+	// CreditMicros is what the user is credited, at the catalog prices they
+	// see. It equals the price; the margin over the upstream cost lives in
+	// those prices, so catalog prices are set above OpenRouter's.
+	CreditMicros int64 `json:"-"`
 }
 
-// $10 buys roughly $5 of OpenRouter usage.
 var Plans = []Plan{
-	{ID: "standard", Name: "Standard", PriceMicros: 10 * MicrosPerUSD, CreditMicros: 5 * MicrosPerUSD},
+	{ID: "standard", Name: "Standard", PriceMicros: 10 * MicrosPerUSD, CreditMicros: 10 * MicrosPerUSD},
 }
 
 func PlanByID(id string) (Plan, bool) {
