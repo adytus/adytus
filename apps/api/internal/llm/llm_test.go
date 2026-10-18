@@ -134,3 +134,47 @@ func TestChatModelStreamsWithUsageAndCost(t *testing.T) {
 		}
 	}
 }
+
+// OpenRouter offers keep its ranking, take the cheapest ZDR price, and drop
+// per-request routers.
+func TestOpenRouterOffers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			if r.URL.Query().Get("sort") != "top-weekly" {
+				t.Errorf("sort = %q", r.URL.Query().Get("sort"))
+			}
+			fmt.Fprint(w, `{"data":[
+				{"id":"b/top","name":"Top","description":"First. Second.","context_length":1000,
+				 "architecture":{"input_modalities":["text","image"]},"pricing":{"prompt":"0.000001","completion":"0.000002"},
+				 "top_provider":{"max_completion_tokens":500},"supported_parameters":["tools"]},
+				{"id":"openrouter/auto","name":"Auto","pricing":{"prompt":"-1","completion":"-1"}},
+				{"id":"a/open","name":"Open","context_length":100,"pricing":{"prompt":"0","completion":"0"}}]}`)
+		case "/endpoints/zdr":
+			fmt.Fprint(w, `{"data":[
+				{"model_id":"b/top","pricing":{"prompt":"0.000003","completion":"0.000004"}},
+				{"model_id":"b/top","pricing":{"prompt":"0.0000015","completion":"0.0000025"}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	got, err := Offers(context.Background(), Provider{ID: OpenRouter, BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Upstream != "b/top" || got[1].Upstream != "a/open" {
+		t.Fatalf("offers = %+v", got)
+	}
+	top := got[0]
+	if !top.ZDR || !top.Vision || !top.Tools || top.Description != "First." || top.MaxOutputTokens != 500 {
+		t.Fatalf("top = %+v", top)
+	}
+	if fmt.Sprintf("%.2f/%.2f", top.PromptUSDPerMTok, top.CompletionUSDPerMTok) != "1.50/2.50" {
+		t.Fatalf("top price = %v/%v", top.PromptUSDPerMTok, top.CompletionUSDPerMTok)
+	}
+	if got[1].ZDR || got[1].Tools {
+		t.Fatalf("open = %+v", got[1])
+	}
+}

@@ -4,6 +4,7 @@
 	import { api, providerName, type AdminModel, type State } from './api.ts';
 	import ProviderCard from './ProviderCard.svelte';
 	import ModelForm from './ModelForm.svelte';
+	import Catalog from './Catalog.svelte';
 
 	let st = $state<State | null>(null);
 	let error = $state('');
@@ -12,6 +13,8 @@
 	let offered = $state<Record<string, string[]>>({});
 	// The model being edited; a model without an id in the list is new.
 	let editing = $state<AdminModel | null>(null);
+	let browsing = $state(false);
+	let filter = $state('');
 
 	$effect(() => {
 		api.state().then(
@@ -55,6 +58,18 @@
 	async function save(m: AdminModel) {
 		if (await run('save', () => api.putModel(m))) editing = null;
 	}
+
+	const add = (m: AdminModel) => run(`add:${m.id}`, () => api.putModel(m));
+
+	const toggle = (m: AdminModel) => run(`en:${m.id}`, () => api.putModel({ ...m, enabled: !m.enabled }));
+
+	const listed = $derived.by(() => {
+		const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+		return (st?.models ?? []).filter((m) =>
+			words.every((w) => `${m.name} ${m.id} ${m.upstream}`.toLowerCase().includes(w))
+		);
+	});
+	const enabledCount = $derived(st?.models.filter((m) => m.enabled).length ?? 0);
 
 	function remove(m: AdminModel) {
 		if (!confirm(`Delete ${m.name || m.id}? Chats on it can't continue until they switch model. Disabling it is undoable.`)) return;
@@ -103,12 +118,26 @@
 		<section aria-labelledby="models-h">
 			<div class="row">
 				<h2 id="models-h">Models</h2>
-				<button class="btn primary" disabled={editing !== null} onclick={() => (editing = blank())}>Add model</button>
+				<div class="actions">
+					<button class="btn" disabled={editing !== null} onclick={() => (editing = blank())}>Add manually</button>
+					<button class="btn primary" disabled={browsing} onclick={() => (browsing = true)}>Browse models</button>
+				</div>
 			</div>
 			<p class="muted">
 				The whitelist users pick from. Prices are what users are charged, in USD per million tokens;
 				OpenRouter's reported cost is billed instead when it sends one.
 			</p>
+
+			{#if browsing}
+				<Catalog models={st.models} {busy} onadd={add} onclose={() => (browsing = false)} />
+			{/if}
+
+			{#if st.models.length > 0}
+				<div class="row">
+					<input class="filter" type="search" placeholder="Filter your models" bind:value={filter} spellcheck="false" />
+					<span class="count">{enabledCount} of {st.models.length} offered</span>
+				</div>
+			{/if}
 
 			{#if editing && isNew}
 				<ModelForm
@@ -122,7 +151,7 @@
 			{/if}
 
 			<ul class="models">
-				{#each st.models as m (m.id)}
+				{#each listed as m (m.id)}
 					{#if editing && !isNew && editing.id === m.id}
 						<li>
 							<ModelForm
@@ -135,6 +164,17 @@
 						</li>
 					{:else}
 						<li class="model" class:off={!m.enabled}>
+							<button
+								class="switch"
+								role="switch"
+								aria-checked={m.enabled}
+								aria-label="Offer {m.name || m.id} to users"
+								title={m.enabled ? 'Offered to users; click to disable' : 'Disabled; click to offer it'}
+								disabled={busy !== ''}
+								onclick={() => toggle(m)}
+							>
+								<span class="knob"></span>
+							</button>
 							<ModelIcon icon={m.icon} size={2} />
 							<div class="about">
 								<p class="name">
@@ -158,13 +198,6 @@
 										Make default
 									</button>
 								{/if}
-								<button
-									class="btn"
-									disabled={busy !== ''}
-									onclick={() => run(`en:${m.id}`, () => api.putModel({ ...m, enabled: !m.enabled }))}
-								>
-									{m.enabled ? 'Disable' : 'Enable'}
-								</button>
 								<button class="btn" disabled={editing !== null} onclick={() => (editing = $state.snapshot(m))}>
 									Edit
 								</button>
@@ -174,6 +207,9 @@
 					{/if}
 				{/each}
 			</ul>
+			{#if filter && listed.length === 0}
+				<p class="muted">No model matches “{filter}”.</p>
+			{/if}
 		</section>
 	{/if}
 </div>
@@ -197,7 +233,7 @@
 		font-stretch: 70%;
 		letter-spacing: -0.03em;
 		line-height: 1;
-		color: var(--stock);
+		color: var(--headline);
 	}
 	h2 {
 		margin: 0;
@@ -237,7 +273,7 @@
 	}
 	.model {
 		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto;
+		grid-template-columns: auto auto minmax(0, 1fr) auto;
 		gap: 1rem;
 		align-items: center;
 		padding: 1rem 0;
@@ -262,13 +298,13 @@
 	.meta {
 		margin: 0;
 		font-size: 0.8125rem;
-		color: #b5b2ab;
+		color: var(--text-soft);
 		overflow-wrap: anywhere;
 	}
 	code {
 		font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 		font-size: 0.8125rem;
-		color: var(--paper);
+		color: inherit;
 	}
 	.tag {
 		font-size: 0.6875rem;
@@ -283,7 +319,53 @@
 	.tag.default {
 		border-color: var(--line-green);
 		background: var(--line-green);
-		color: #000;
+		color: var(--black);
+	}
+	.filter {
+		font: inherit;
+		flex: 1;
+		max-width: 24rem;
+		padding: 0.5rem 0.875rem;
+		border: 1px solid var(--rule);
+		border-radius: 999px;
+		background: var(--surface);
+		color: var(--paper);
+	}
+	.count {
+		font-size: 0.875rem;
+		color: var(--muted);
+	}
+	.switch {
+		position: relative;
+		width: 2.75rem;
+		height: 1.5rem;
+		padding: 0;
+		border: 0;
+		border-radius: 999px;
+		background: var(--stock-dim);
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+	.switch[aria-checked='true'] {
+		background: var(--line-green);
+	}
+	.switch:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
+	}
+	.knob {
+		position: absolute;
+		top: 0.1875rem;
+		left: 0.1875rem;
+		width: 1.125rem;
+		height: 1.125rem;
+		border-radius: 50%;
+		background: #fff;
+		box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+		transition: transform 0.15s;
+	}
+	.switch[aria-checked='true'] .knob {
+		transform: translateX(1.25rem);
 	}
 	.actions {
 		display: flex;
@@ -296,7 +378,7 @@
 			padding: 1.5rem 1rem 3rem;
 		}
 		.model {
-			grid-template-columns: auto minmax(0, 1fr);
+			grid-template-columns: auto auto minmax(0, 1fr);
 		}
 		.actions {
 			grid-column: 1 / -1;

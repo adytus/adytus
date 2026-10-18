@@ -30,6 +30,7 @@ func (s *Server) backofficeRoutes(me fiber.Router) {
 	bo.Get("", s.backofficeState)
 	bo.Put("/providers/:id", s.putProvider)
 	bo.Post("/providers/:id/test", s.testProvider)
+	bo.Get("/providers/:id/offers", s.providerOffers)
 	bo.Put("/models/:id", s.putModel)
 	bo.Delete("/models/:id", s.deleteModel)
 	bo.Put("/default", s.putDefaultModel)
@@ -305,6 +306,28 @@ func (s *Server) testProvider(c fiber.Ctx) error {
 				return errs.Upstream.New("%s", err.Error())
 			}
 			return c.JSON(fiber.Map{"models": ids})
+		}
+	}
+	return errs.NotFound.New("no provider %q", id)
+}
+
+// providerOffers lists the models the provider serves, to add from.
+func (s *Server) providerOffers(c fiber.Ctx) error {
+	id, err := providerParam(c)
+	if err != nil {
+		return err
+	}
+	providers, err := s.providers(c.Context(), s.Store.DB)
+	if err != nil {
+		return err
+	}
+	for _, p := range providers {
+		if p.ID == id {
+			offers, err := llm.Offers(c.Context(), p)
+			if err != nil {
+				return errs.Upstream.New("%s", err.Error())
+			}
+			return c.JSON(fiber.Map{"offers": offers})
 		}
 	}
 	return errs.NotFound.New("no provider %q", id)

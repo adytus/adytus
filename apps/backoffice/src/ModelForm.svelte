@@ -137,8 +137,9 @@
 		padding: 1.25rem;
 		margin: 1rem 0;
 		border: 1px solid var(--line-blue);
-		border-radius: 6px;
-		background: #0a0a0a;
+		border-radius: 16px;
+		background: var(--deep);
+		color: var(--paper);
 	}
 	.preview {
 		display: flex;

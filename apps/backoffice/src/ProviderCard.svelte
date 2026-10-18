@@ -103,8 +103,9 @@
 		align-content: start;
 		padding: 1rem;
 		border: 1px solid var(--rule);
-		border-radius: 6px;
-		background: #0a0a0a;
+		border-radius: 16px;
+		background: var(--deep);
+		color: var(--paper);
 	}
 	.head {
 		display: flex;

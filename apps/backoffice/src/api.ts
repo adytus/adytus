@@ -24,6 +24,19 @@ export type AdminModel = {
 	default: boolean;
 	updated_at?: string;
 };
+// A model a provider serves, not necessarily in the catalog yet.
+export type Offer = {
+	upstream: string;
+	name: string;
+	description?: string;
+	prompt_usd_per_mtok: number;
+	completion_usd_per_mtok: number;
+	context_tokens?: number;
+	max_output_tokens?: number;
+	vision: boolean;
+	tools: boolean;
+	zdr: boolean;
+};
 export type State = { providers: Provider[]; models: AdminModel[] };
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -51,6 +64,8 @@ export const api = {
 	putProvider: (id: string, base_url: string, api_key?: string) =>
 		call<State>('PUT', `/providers/${id}`, { base_url, api_key }),
 	testProvider: (id: string) => call<{ models: string[] }>('POST', `/providers/${id}/test`),
+	// OpenRouter's come most used first.
+	offers: (id: string) => call<{ offers: Offer[] }>('GET', `/providers/${id}/offers`),
 	putModel: (m: AdminModel) => call<State>('PUT', `/models/${encodeURIComponent(m.id)}`, m),
 	deleteModel: (id: string) => call<State>('DELETE', `/models/${encodeURIComponent(id)}`),
 	setDefault: (model: string) => call<State>('PUT', '/default', { model })
