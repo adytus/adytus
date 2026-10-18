@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://adytus-api.up.railway.app/api/:path*" },
-    { "source": "/healthz", "destination": "https://adytus-api.up.railway.app/healthz" }
+    { "source": "/api/:path*", "destination": "https://adytus-backend-production.up.railway.app/api/:path*" },
+    { "source": "/healthz", "destination": "https://adytus-backend-production.up.railway.app/healthz" }
   ]
 }
