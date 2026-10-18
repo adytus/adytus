@@ -1,5 +1,5 @@
 export type User = { id: string; email: string; created_at: string };
-export type Plan = { id: string; name: string; price_micros: number; credit_micros: number };
+export type Plan = { id: string; name: string; price_micros: number };
 export type Model = {
 	id: string;
 	name: string;

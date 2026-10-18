@@ -167,7 +167,7 @@
 		font-stretch: 70%;
 		letter-spacing: -0.03em;
 		line-height: 1;
-		color: var(--stock);
+		color: var(--headline);
 	}
 	h2 {
 		margin: 0 0 0.5rem;
@@ -222,7 +222,7 @@
 	.desc {
 		margin: 0;
 		font-size: 0.875rem;
-		color: #b5b2ab;
+		color: var(--text-soft);
 		line-height: 1.45;
 	}
 	.leaves {
@@ -252,7 +252,7 @@
 		width: 2.75rem;
 		height: 1.5rem;
 		border-radius: 999px;
-		background: #2a2a2a;
+		background: var(--surface-2);
 		transition: background 0.15s;
 	}
 	.knob::after {
@@ -273,7 +273,7 @@
 		background: var(--line-green);
 	}
 	.switch[aria-checked='true'] .knob::after {
-		background: #000;
+		background: var(--black);
 		transform: translateX(1.25rem);
 	}
 	.state {

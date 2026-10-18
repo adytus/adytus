@@ -580,7 +580,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-		color: #b5b2ab;
+		color: var(--text-soft);
 		font-weight: 600;
 	}
 	.thinking {
@@ -630,7 +630,7 @@
 		font-stretch: 70%;
 		letter-spacing: -0.03em;
 		line-height: 0.95;
-		color: var(--stock);
+		color: var(--headline);
 	}
 	.muted {
 		color: var(--muted);
@@ -686,7 +686,7 @@
 		height: 1.1em;
 		vertical-align: text-bottom;
 		margin-left: 1px;
-		background: var(--stock);
+		background: var(--headline);
 		animation: blink 1s steps(1) infinite;
 	}
 	@keyframes blink {
@@ -708,7 +708,7 @@
 		border: 2px solid var(--rule);
 		border-radius: 8px;
 		padding: 0.375rem;
-		background: #0a0a0a;
+		background: var(--deep);
 	}
 	.box:focus-within {
 		border-color: var(--stock-dim);
@@ -740,8 +740,8 @@
 		flex: none;
 	}
 	.clip[aria-expanded='true'] {
-		color: var(--stock);
-		background: #161616;
+		color: var(--headline);
+		background: var(--surface-2);
 	}
 	.clip:disabled {
 		opacity: 0.35;
@@ -816,7 +816,7 @@
 		border: 0;
 		border-radius: 6px;
 		overflow: hidden;
-		background: #0a0a0a;
+		background: var(--deep);
 		cursor: zoom-in;
 		border-bottom: 3px solid var(--line-yellow);
 	}
@@ -896,7 +896,7 @@
 		white-space: nowrap;
 	}
 	.pick:hover {
-		background: #151515;
+		background: var(--surface-2);
 	}
 	.picker .muted {
 		margin: 0.25rem 0.5rem;

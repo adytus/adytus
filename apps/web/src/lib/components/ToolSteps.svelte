@@ -124,7 +124,7 @@
 		width: 0.875rem;
 		height: 0.875rem;
 		border-radius: 50%;
-		background: #000;
+		background: var(--black);
 		border: 3px solid var(--c);
 		z-index: 1;
 	}
@@ -178,7 +178,7 @@
 		margin: 0;
 		padding: 0.5rem 0.625rem;
 		border-radius: 4px;
-		background: #0d0d0d;
+		background: var(--surface);
 		border: 1px solid var(--rule);
 		font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 		font-size: 0.8125rem;
@@ -189,7 +189,7 @@
 		overflow-y: auto;
 	}
 	.out {
-		color: #c9c6bf;
+		color: var(--text-soft);
 	}
 	.peek {
 		margin-top: 0.375rem;
@@ -225,7 +225,7 @@
 		border: 0;
 		border-radius: 6px;
 		overflow: hidden;
-		background: #0a0a0a;
+		background: var(--deep);
 		cursor: zoom-in;
 		border-bottom: 3px solid var(--c);
 	}

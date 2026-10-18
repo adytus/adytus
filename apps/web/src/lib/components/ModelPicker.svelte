@@ -93,7 +93,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.5rem;
-		background: #0d0d0d;
+		background: var(--surface);
 		color: var(--paper);
 		border: 2px solid var(--rule);
 		border-radius: 999px;
@@ -133,7 +133,7 @@
 		margin: 0;
 		padding: 0.375rem;
 		width: min(24rem, calc(100vw - 2rem));
-		background: #0d0d0d;
+		background: var(--surface);
 		border: 2px solid var(--rule);
 		border-radius: 8px;
 		box-shadow: 0 12px 32px rgb(0 0 0 / 0.6);
@@ -154,11 +154,11 @@
 	}
 	.opt:hover,
 	.opt:focus-visible {
-		background: #1a1a1a;
+		background: var(--surface-2);
 		outline-offset: -2px;
 	}
 	.opt[aria-selected='true'] {
-		background: #1a1a1a;
+		background: var(--surface-2);
 		box-shadow: inset 3px 0 0 var(--line-yellow);
 	}
 	.info {
@@ -183,7 +183,7 @@
 		font-weight: 600;
 		padding: 0.0625rem 0.375rem;
 		border-radius: 3px;
-		background: #222;
-		color: #c9c6bf;
+		background: var(--surface-2);
+		color: var(--text-soft);
 	}
 </style>

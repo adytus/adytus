@@ -67,7 +67,7 @@
 		height: 1.1em;
 		vertical-align: text-bottom;
 		margin-left: 2px;
-		background: var(--stock);
+		background: var(--headline);
 		animation: md-blink 1s steps(1) infinite;
 	}
 	@keyframes -global-md-blink {

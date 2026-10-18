@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { api, ApiError } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
+	import Wordmark from '#lib/components/Wordmark.svelte';
 	import FareCard from '#lib/components/FareCard.svelte';
 	import ModelIcon from '#lib/components/ModelIcon.svelte';
 	import Alert from '#lib/components/Alert.svelte';
@@ -23,6 +24,13 @@
 				else failure = err instanceof ApiError ? err.message : 'The API did not answer.';
 			}
 		);
+	});
+
+	// Nothing works without a subscription: send unpaid accounts to subscribe.
+	$effect(() => {
+		if (ready && app.balance && app.balance.purchased_micros === 0 && !page.url.pathname.startsWith('/account')) {
+			goto('/account');
+		}
 	});
 
 	// Close the drawer after navigating on small screens.
@@ -89,14 +97,14 @@
 {:else}
 	<div class="shell">
 		<header class="topbar">
-			<a class="wordmark" href="/chat">ADYTUS</a>
+			<a class="wordmark" href="/chat"><Wordmark size={1.5} /></a>
 			<button class="btn" aria-expanded={railOpen} aria-controls="rail" onclick={() => (railOpen = !railOpen)}>
 				{railOpen ? 'Close' : 'Menu'}
 			</button>
 		</header>
 
 		<nav id="rail" class="rail" class:open={railOpen} aria-label="Main">
-			<a class="wordmark desktop" href="/chat">ADYTUS</a>
+			<a class="wordmark desktop" href="/chat"><Wordmark size={2} /></a>
 			<a class="btn primary new" href="/chat">New chat</a>
 
 			<h2 class="sr-only">Chats</h2>
@@ -170,7 +178,7 @@
 		font-size: 2rem;
 		letter-spacing: -0.03em;
 		text-decoration: none;
-		color: var(--stock);
+		color: var(--headline);
 		line-height: 1;
 		padding: 0 0.25rem;
 	}
@@ -219,7 +227,7 @@
 	}
 	.chat:hover {
 		color: var(--paper);
-		background: #111;
+		background: var(--surface-2);
 	}
 	.chat.active {
 		color: var(--ink);
@@ -259,11 +267,11 @@
 	}
 	.sections a:hover {
 		color: var(--paper);
-		background: #111;
+		background: var(--surface-2);
 	}
 	.sections a[aria-current='page'] {
 		color: var(--paper);
-		background: #161616;
+		background: var(--surface-2);
 	}
 	.stop {
 		width: 0.75rem;

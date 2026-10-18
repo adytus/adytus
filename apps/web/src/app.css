@@ -10,9 +10,9 @@
 @theme inline {
 	--color-background: var(--black);
 	--color-foreground: var(--paper);
-	--color-card: #0d0d0d;
-	--color-popover: #0d0d0d;
-	--color-muted: #121212;
+	--color-card: var(--surface);
+	--color-popover: var(--surface);
+	--color-muted: var(--surface-2);
 	--color-muted-foreground: var(--muted);
 	--color-border: var(--rule);
 	--color-primary: var(--paper);

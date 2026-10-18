@@ -5,6 +5,8 @@
 	import RecoveryStub from '#lib/components/RecoveryStub.svelte';
 	import RouteBadge from '#lib/components/RouteBadge.svelte';
 	import Barcode from '#lib/components/Barcode.svelte';
+	import Wordmark from '#lib/components/Wordmark.svelte';
+	import { UI_MODE } from '#lib/theme.ts';
 
 	type Mode = 'login' | 'signup' | 'recover';
 	let mode = $state<Mode>('login');
@@ -30,7 +32,7 @@
 		} catch {
 			plan = null;
 		}
-		if (!plan) goto('/chat');
+		if (!plan) step = 'form';
 	}
 
 	async function subscribe() {
@@ -82,6 +84,7 @@
 
 <main>
 	<section class="masthead">
+		{#if UI_MODE === 1}
 		<div class="route" aria-hidden="true">
 			<RouteBadge line="blue">A</RouteBadge>
 			<span class="arrow"></span>
@@ -91,7 +94,8 @@
 			<span class="arrow"></span>
 			<RouteBadge line="purple">T</RouteBadge>
 		</div>
-		<h1>ADYTUS</h1>
+		{/if}
+		<h1><Wordmark size={UI_MODE === 2 ? 4.5 : 1} /></h1>
 		<p class="lede">
 			A private line to frontier models. Chats and files are encrypted with a key only your
 			password opens, and every reply is metered to the token.
@@ -101,10 +105,9 @@
 	{#if step === 'plan' && plan}
 		<div class="ticket offer" role="dialog" aria-labelledby="offer-h">
 			<div class="body">
-				<h2 id="offer-h">Add credit to start chatting</h2>
+				<h2 id="offer-h">Subscribe to start chatting</h2>
 				<p class="deal">
-					<span class="pay">Pay {usd(plan.price_micros, 0)}</span>
-					<span class="get">get {usd(plan.credit_micros)} of credit</span>
+					<span class="pay">{usd(plan.price_micros, 0)}</span>
 				</p>
 				<p class="hint">
 					Credit is spent per token as models reply, at the prices shown next to each model. It
@@ -116,7 +119,6 @@
 				<button class="btn primary" disabled={paying} onclick={subscribe}>
 					{paying ? 'Paying…' : `Subscribe for ${usd(plan.price_micros, 0)}`}
 				</button>
-				<button type="button" class="link" onclick={() => goto('/chat')}>Skip for now</button>
 			</div>
 		</div>
 	{:else if step === 'paid' && plan && paid}
@@ -125,7 +127,7 @@
 				<p class="stamp">Paid</p>
 				<h2>You subscribed for {usd(plan.price_micros, 0)}</h2>
 				<p>
-					{usd(plan.credit_micros)} of credit was added. You have {usd(paid.balance.available_micros)} to spend.
+					{usd(plan.price_micros, 0)} of credit was added. You have {usd(paid.balance.available_micros)} to spend.
 				</p>
 				<p class="hint">Receipt {paid.ref}</p>
 			</div>
@@ -226,7 +228,7 @@
 		font-stretch: 70%;
 		letter-spacing: -0.04em;
 		line-height: 0.85;
-		color: var(--stock);
+		color: var(--headline);
 	}
 	.lede {
 		max-width: 34ch;

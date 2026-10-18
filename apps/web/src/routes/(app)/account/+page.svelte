@@ -34,7 +34,7 @@
 		try {
 			const r = await api.subscribe(p.id);
 			app.balance = r.balance;
-			bought = `You subscribed for ${usd(p.price_micros, 0)}. ${usd(p.credit_micros)} of credit was added (receipt ${r.payment_ref}).`;
+			bought = `You subscribed for ${usd(p.price_micros, 0)}. ${usd(p.price_micros, 0)} of credit was added (receipt ${r.payment_ref}).`;
 			await loadLedger();
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Payment failed. Try again.';
@@ -101,8 +101,7 @@
 						<RouteBadge line={lines[i % lines.length]} size={2.25}>{p.name[0]}</RouteBadge>
 						<span class="micro">Single fare · no expiry</span>
 					</div>
-					<p class="pay">Pay {usd(p.price_micros, 0)}</p>
-					<p class="credit">get {usd(p.credit_micros)}</p>
+					<p class="pay">{usd(p.price_micros, 0)}</p>
 					<p class="of">of credit</p>
 					<div class="foot">
 						<Barcode value={p.id.toUpperCase()} height={18} />
@@ -197,7 +196,7 @@
 		font-weight: 900;
 		font-stretch: 70%;
 		letter-spacing: -0.03em;
-		color: var(--stock);
+		color: var(--headline);
 	}
 	h2 {
 		margin: 0 0 0.5rem;
@@ -247,7 +246,7 @@
 	.used {
 		margin: 0 0 0.5rem;
 		font-size: 1.125rem;
-		color: #b5b2ab;
+		color: var(--text-soft);
 	}
 	.used strong {
 		font-size: 2.25rem;
@@ -259,7 +258,7 @@
 	.meter {
 		height: 8px;
 		border-radius: 4px;
-		background: #1f1f1f;
+		background: var(--surface-2);
 		overflow: hidden;
 		max-width: 32rem;
 	}

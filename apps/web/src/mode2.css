@@ -1,0 +1,207 @@
+/* UI mode 2: the brand look. Parchment and white surfaces, ink for text and
+   buttons, temple teal for the few moments of accent. Everything here keys
+   off <html data-ui="2">, set from lib/theme.ts, and only re-points the
+   tokens and reshapes the shared pieces; mode 1 is untouched. */
+:root[data-ui='2'] {
+	/* Parchment, Ink, Temple Teal, White, Stone, Limestone, Mist, Slate. */
+	--black: #efede9;
+	--stock: #ffffff;
+	--stock-dim: #c9c5be;
+	--ink: #1c1c1c;
+	--paper: #1c1c1c;
+	--muted: #787875;
+	--rule: #dbd8d3;
+	--headline: #1c1c1c;
+	--surface: #ffffff;
+	--surface-2: #e7e4df;
+	--deep: #ffffff;
+	--text-soft: #5b5a57;
+	--teal: #104a4f;
+	--mist: #e5ecea;
+	--slate: #1f2937;
+	/* Route colors become a quiet set that sits with the teal. */
+	--line-blue: #104a4f;
+	--line-yellow: #b98a2e;
+	--line-red: #b3412f;
+	--line-purple: #5a5f8f;
+	--line-green: #2e7d5b;
+	--font: 'Figtree', 'Helvetica Neue', Arial, sans-serif;
+	color-scheme: light;
+}
+
+:root[data-ui='2'] :focus-visible {
+	outline-color: var(--teal);
+}
+
+/* Cards: white, softly rounded, hairline border, no ticket stock. */
+:root[data-ui='2'] .ticket {
+	background: var(--stock);
+	border: 1px solid var(--rule);
+	border-radius: 16px;
+	box-shadow: 0 1px 2px rgb(28 28 28 / 0.04);
+}
+:root[data-ui='2'] .micro {
+	letter-spacing: 0.06em;
+	color: var(--muted);
+	opacity: 1;
+}
+
+/* Buttons: ink pills. */
+:root[data-ui='2'] .btn {
+	border-width: 1px;
+	border-color: var(--rule);
+	font-weight: 600;
+}
+:root[data-ui='2'] .btn:hover:not(:disabled) {
+	background: var(--surface-2);
+}
+:root[data-ui='2'] .btn.primary {
+	background: var(--ink);
+	border-color: var(--ink);
+	color: #fff;
+}
+:root[data-ui='2'] .btn.primary:hover:not(:disabled) {
+	background: #3a3a3a;
+}
+:root[data-ui='2'] .btn.danger {
+	color: var(--line-red);
+}
+
+/* Fields. */
+:root[data-ui='2'] .field input,
+:root[data-ui='2'] .field select,
+:root[data-ui='2'] textarea {
+	border: 1px solid var(--rule);
+	border-radius: 12px;
+	background: #fff;
+}
+:root[data-ui='2'] .ticket .field input {
+	background: #fff;
+	border-color: var(--rule);
+}
+:root[data-ui='2'] .ticket .error {
+	color: var(--line-red);
+}
+
+/* Type: Figtree has no width axis, so drop the condensed display styling. */
+:root[data-ui='2'] h1,
+:root[data-ui='2'] h2,
+:root[data-ui='2'] h3,
+:root[data-ui='2'] .blank-head,
+:root[data-ui='2'] .wordmark,
+:root[data-ui='2'] .title,
+:root[data-ui='2'] .left,
+:root[data-ui='2'] .pay {
+	font-stretch: 100%;
+	letter-spacing: -0.025em;
+}
+:root[data-ui='2'] h1,
+:root[data-ui='2'] .blank-head {
+	font-weight: 700;
+	line-height: 1.05;
+}
+:root[data-ui='2'] .wordmark {
+	font-weight: 700;
+	font-size: 1.5rem;
+	color: var(--ink);
+}
+
+/* Sidebar: parchment, soft selections, no metro stops. */
+:root[data-ui='2'] .rail {
+	background: var(--black);
+}
+:root[data-ui='2'] .chat,
+:root[data-ui='2'] .sections a {
+	border-radius: 10px;
+}
+:root[data-ui='2'] .chat:hover,
+:root[data-ui='2'] .sections a:hover {
+	background: var(--surface-2);
+	color: var(--ink);
+}
+:root[data-ui='2'] .chat.active {
+	background: var(--stock);
+	color: var(--ink);
+	box-shadow: 0 0 0 1px var(--rule);
+}
+:root[data-ui='2'] .sections a[aria-current='page'] {
+	background: var(--stock);
+	color: var(--ink);
+	box-shadow: 0 0 0 1px var(--rule);
+}
+:root[data-ui='2'] .stop {
+	border-width: 2px;
+	border-color: var(--teal);
+}
+:root[data-ui='2'] [aria-current='page'] .stop {
+	background: var(--teal);
+}
+:root[data-ui='2'] .fare.ticket {
+	border-left: 1px solid var(--rule);
+}
+:root[data-ui='2'] .fare.ticket:hover {
+	background: var(--surface-2);
+}
+:root[data-ui='2'] .held {
+	color: #fff;
+	background: var(--teal);
+	border-radius: 999px;
+}
+
+/* Conversation: ink bubble for you, limestone bubble for the model. */
+:root[data-ui='2'] .q.ticket {
+	background: var(--ink);
+	color: #fff;
+	border: 0;
+	border-radius: 20px;
+	box-shadow: none;
+}
+:root[data-ui='2'] .q .att {
+	border-top-color: rgb(255 255 255 / 0.3);
+}
+:root[data-ui='2'] .scroll .column .a {
+	background: var(--surface-2);
+	border-radius: 20px;
+	padding: 0.875rem 1.125rem;
+	justify-self: start;
+	max-width: 100%;
+}
+:root[data-ui='2'] .caret {
+	background: var(--teal);
+}
+:root[data-ui='2'] .fare {
+	color: var(--teal);
+}
+
+/* Composer: a rounded field with a round send. */
+:root[data-ui='2'] .composer {
+	border-top: 0;
+}
+:root[data-ui='2'] .box {
+	border: 1px solid var(--rule);
+	border-radius: 28px;
+	padding: 0.4375rem 0.5rem 0.4375rem 0.4375rem;
+	box-shadow: 0 1px 3px rgb(28 28 28 / 0.06);
+}
+:root[data-ui='2'] .box:focus-within {
+	border-color: var(--stock-dim);
+}
+:root[data-ui='2'] .box .btn {
+	border-radius: 999px;
+}
+:root[data-ui='2'] .picker {
+	border: 1px solid var(--rule);
+	border-radius: 16px;
+	background: #fff;
+}
+:root[data-ui='2'] .chips li {
+	background: var(--surface-2);
+	border-radius: 999px;
+}
+
+/* Status pills read as mist with teal text. */
+:root[data-ui='2'] .alert {
+	border-left-width: 1px;
+	border: 1px solid color-mix(in srgb, var(--tone) 35%, var(--rule));
+	border-radius: 14px;
+}

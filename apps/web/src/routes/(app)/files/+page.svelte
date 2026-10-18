@@ -188,7 +188,7 @@
 		font-stretch: 70%;
 		letter-spacing: -0.03em;
 		line-height: 1;
-		color: var(--stock);
+		color: var(--headline);
 	}
 	.muted {
 		color: var(--muted);
@@ -238,7 +238,7 @@
 	}
 	.tabs button[aria-selected='true'] {
 		background: var(--stock);
-		border-color: var(--stock);
+		border-color: var(--headline);
 		color: var(--ink);
 	}
 	.tabs button:disabled {
@@ -261,7 +261,7 @@
 	.card {
 		display: grid;
 		grid-template-rows: auto 1fr auto;
-		background: #121212;
+		background: var(--surface);
 		border-radius: 8px;
 		overflow: hidden;
 		border: 1px solid var(--rule);
@@ -270,7 +270,7 @@
 		display: grid;
 		place-items: center;
 		aspect-ratio: 4 / 3;
-		background: #0a0a0a;
+		background: var(--deep);
 		border-bottom: 4px solid var(--cap);
 		--cap: var(--line-red);
 		text-decoration: none;
@@ -326,7 +326,7 @@
 		margin: 0.375rem 0 0;
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: #b5b2ab;
+		color: var(--text-soft);
 	}
 	.actions {
 		display: flex;

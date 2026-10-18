@@ -1,9 +1,14 @@
 <script lang="ts">
 	import '../app.css';
+	import '../mode2.css';
+	import { UI_MODE } from '#lib/theme.ts';
 	import favicon from '#lib/assets/favicon.svg';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
+
+	// The look is chosen in lib/theme.ts; mode 2's rules key off this.
+	document.documentElement.dataset.ui = String(UI_MODE);
 </script>
 
 <svelte:head>
@@ -27,6 +32,13 @@
 			--line-red: #e8322b;
 			--line-purple: #7b4bd6;
 			--line-green: #2fbf71;
+			/* Surfaces and text that differ between looks (see mode2.css). */
+			--headline: var(--stock);
+			--surface: #0d0d0d;
+			--surface-2: #161616;
+			--deep: #0a0a0a;
+			--text-soft: #b5b2ab;
+			--font: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
 			color-scheme: dark;
 		}
 		*,
@@ -39,7 +51,7 @@
 			margin: 0;
 			background: var(--black);
 			color: var(--paper);
-			font-family: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+			font-family: var(--font);
 			font-size: 16px;
 			-webkit-font-smoothing: antialiased;
 		}

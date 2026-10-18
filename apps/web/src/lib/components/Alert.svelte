@@ -42,7 +42,7 @@
 		gap: 0.75rem;
 		padding: 0.75rem 0.875rem;
 		border-radius: 6px;
-		background: color-mix(in srgb, var(--tone) 12%, #000);
+		background: color-mix(in srgb, var(--tone) 12%, var(--black));
 		border-left: 4px solid var(--tone);
 		color: var(--paper);
 		text-align: left;
@@ -82,7 +82,7 @@
 	.detail {
 		font-size: 0.875rem;
 		line-height: 1.45;
-		color: #c9c6bf;
+		color: var(--text-soft);
 	}
 	.detail :global(p) {
 		margin: 0;
