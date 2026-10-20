@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { api, ApiError, usd, type Balance, type Plan } from '#lib/api.ts';
+	import { api, ApiError, usd, tokenCount, type Balance, type Plan } from '#lib/api.ts';
 	import Alert from '#lib/components/Alert.svelte';
 	import RecoveryStub from '#lib/components/RecoveryStub.svelte';
 	import RouteBadge from '#lib/components/RouteBadge.svelte';
@@ -108,10 +108,11 @@
 				<h2 id="offer-h">Subscribe to start chatting</h2>
 				<p class="deal">
 					<span class="pay">{usd(plan.price_micros, 0)}</span>
+					<span class="credit">{tokenCount(plan.credit_tokens)} tokens</span>
 				</p>
 				<p class="hint">
-					Credit is spent per token as models reply, at the prices shown next to each model. It
-					doesn't expire. Payment is simulated in this build, so no card is needed.
+					Tokens are spent as models reply. They don't expire. Payment is simulated in this
+					build, so no card is needed.
 				</p>
 				{#if payError}<Alert title="Payment failed"><p>{payError}</p></Alert>{/if}
 			</div>
@@ -127,7 +128,8 @@
 				<p class="stamp">Paid</p>
 				<h2>You subscribed for {usd(plan.price_micros, 0)}</h2>
 				<p>
-					{usd(plan.price_micros, 0)} of credit was added. You have {usd(paid.balance.available_micros)} to spend.
+					{tokenCount(plan.credit_tokens)} tokens were added. You have {tokenCount(paid.balance.available_tokens)}
+					tokens left.
 				</p>
 				<p class="hint">Receipt {paid.ref}</p>
 			</div>
@@ -299,7 +301,7 @@
 		font-size: 1.125rem;
 		font-weight: 700;
 	}
-	.get {
+	.credit {
 		font-size: 2.75rem;
 		font-weight: 900;
 		font-stretch: 70%;

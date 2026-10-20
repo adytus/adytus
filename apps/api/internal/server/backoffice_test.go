@@ -23,7 +23,12 @@ func TestBackofficeHiddenFromUsers(t *testing.T) {
 	if privs := me["privileges"].([]any); len(privs) != 0 {
 		t.Fatalf("privileges = %v, want none", privs)
 	}
-	for _, path := range []string{"/api/backoffice", "/api/backoffice/ui/backoffice.js"} {
+	for _, m := range e.must(200, "GET", "/api/models", nil)["models"].([]any) {
+		if _, ok := m.(map[string]any)["prompt_usd_per_mtok"]; ok {
+			t.Fatalf("non-admin saw model prices: %v", m)
+		}
+	}
+	for _, path := range []string{"/api/backoffice", "/api/backoffice/users", "/api/backoffice/ui/backoffice.js"} {
 		e.must(404, "GET", path, nil)
 	}
 	e.must(404, "PUT", "/api/backoffice/default", map[string]string{"model": "pricey"})
@@ -98,6 +103,14 @@ func TestBackofficeProvidersAndModels(t *testing.T) {
 	if models["default"] != "routed" {
 		t.Fatalf("default = %v", models["default"])
 	}
+	for _, m := range models["models"].([]any) {
+		m := m.(map[string]any)
+		if m["id"] == "routed" {
+			if m["prompt_usd_per_mtok"] != float64(1) || m["completion_usd_per_mtok"] != float64(2) {
+				t.Fatalf("admin lost model prices: %v", m)
+			}
+		}
+	}
 
 	// Clearing the key while a model needs it is refused and changes nothing.
 	e.must(400, "PUT", "/api/backoffice/providers/openrouter",
@@ -122,4 +135,31 @@ func TestBackofficeProvidersAndModels(t *testing.T) {
 	}
 	e.must(400, "DELETE", "/api/backoffice/models/cheap", nil)
 	e.must(404, "PUT", "/api/backoffice/providers/nope", map[string]any{"base_url": "http://x"})
+}
+
+func TestBackofficeUserUsage(t *testing.T) {
+	e := newEnv(t)
+	e.signup("admin@example.com")
+	e.makeAdmin("admin@example.com")
+	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+
+	chatID := e.must(201, "POST", "/api/chats", map[string]string{"model": "cheap"})["chat"].(map[string]any)["id"].(string)
+	if status, ev := e.sendMessage(chatID, "hi"); status != 200 || last(ev).Name != "done" {
+		t.Fatalf("send: %d %+v", status, ev)
+	}
+
+	users := e.must(200, "GET", "/api/backoffice/users", nil)["users"].([]any)
+	if len(users) != 1 {
+		t.Fatalf("users = %v", users)
+	}
+	u := users[0].(map[string]any)
+	if u["email"] != "admin@example.com" || u["is_admin"] != true {
+		t.Fatalf("user = %v", u)
+	}
+	if num(u["purchased_tokens"]) != 5000 || num(u["available_tokens"]) != 4998 || num(u["used_tokens"]) != 2 {
+		t.Fatalf("token balance = %v", u)
+	}
+	if num(u["prompt_tokens"]) != 1000 || num(u["completion_tokens"]) != 100 || num(u["requests"]) != 1 {
+		t.Fatalf("usage = %v", u)
+	}
 }

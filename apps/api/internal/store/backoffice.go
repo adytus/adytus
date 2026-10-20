@@ -116,3 +116,64 @@ func SetDefaultModel(ctx context.Context, q DBTX, id string) error {
 	}
 	return err
 }
+
+// --- users ---
+
+// AdminUser is one account's usage summary for the backoffice. It contains no
+// chats or files, only billing and token counts.
+type AdminUser struct {
+	ID               uuid.UUID
+	Email            string
+	IsAdmin          bool
+	CreatedAt        time.Time
+	CreditMicros     int64
+	HeldMicros       int64
+	PurchasedMicros  int64
+	UsedMicros       int64
+	SpentTodayMicros int64
+	PromptTokens     int64
+	CompletionTokens int64
+	Requests         int64
+}
+
+func Users(ctx context.Context, q DBTX) ([]AdminUser, error) {
+	rows, err := q.Query(ctx, `
+		SELECT u.id, u.email, u.is_admin, u.created_at,
+			COALESCE(l.credit_micros, 0), COALESCE(h.held_micros, 0),
+			COALESCE(l.purchased_micros, 0), COALESCE(l.used_micros, 0),
+			COALESCE(l.spent_today_micros, 0), COALESCE(l.prompt_tokens, 0),
+			COALESCE(l.completion_tokens, 0), COALESCE(l.requests, 0)
+		FROM users u
+		LEFT JOIN (
+			SELECT user_id,
+				SUM(delta_micros) AS credit_micros,
+				COALESCE(SUM(delta_micros) FILTER (WHERE reason = 'subscription'), 0) AS purchased_micros,
+				COALESCE(-SUM(delta_micros) FILTER (WHERE reason = 'usage'), 0) AS used_micros,
+				COALESCE(-SUM(delta_micros) FILTER (WHERE reason = 'usage'
+					AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), 0) AS spent_today_micros,
+				COALESCE(SUM(prompt_tokens) FILTER (WHERE reason = 'usage'), 0) AS prompt_tokens,
+				COALESCE(SUM(completion_tokens) FILTER (WHERE reason = 'usage'), 0) AS completion_tokens,
+				COUNT(*) FILTER (WHERE reason = 'usage') AS requests
+			FROM credit_ledger GROUP BY user_id
+		) l ON l.user_id = u.id
+		LEFT JOIN (
+			SELECT user_id, SUM(amount_micros) AS held_micros
+			FROM credit_holds WHERE expires_at > now() GROUP BY user_id
+		) h ON h.user_id = u.id
+		ORDER BY u.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AdminUser{}
+	for rows.Next() {
+		var u AdminUser
+		if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.CreatedAt,
+			&u.CreditMicros, &u.HeldMicros, &u.PurchasedMicros, &u.UsedMicros,
+			&u.SpentTodayMicros, &u.PromptTokens, &u.CompletionTokens, &u.Requests); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}

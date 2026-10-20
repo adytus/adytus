@@ -49,6 +49,7 @@ Sessions as decrypt hosts:
 
 - **Metering per call.** `internal/meter` wraps the Eino model. Every `Generate`/`Stream` call reserves a hold (estimated prompt plus the catalog's max output), forces the catalog's upstream model and output limit, and settles what the call used. An agent loop therefore pays step by step and stops at the first step the user can't afford. The chat handler reserves the first call's hold before responding, so a lack of credit is a plain 402.
 - **What gets billed.** OpenRouter's reported `usage.cost` when present (read off the HTTP stream, since Eino's adapter drops it), else provider-reported token counts at catalog prices, else (a stream cut off before usage arrived) our pessimistic estimate. A call that produced nothing is released, not billed.
+- **Token credits.** Users see balances and charges in whole token credits, where 1 token = 1,000 micro-USD (so $10 buys 10,000 tokens). The ledger still stores micro-USD; holds and settlements round up to the next whole token.
 - **Images.** Vision models accept image attachments. Images are downscaled to 1024px and re-encoded as JPEG before sending, which also strips metadata; the catalog's `image_tokens` is the per-image allowance used for holds.
 - **Recovery code (product decision).** Signup and password change issue a recovery code that also wraps the MK; it's the only way back in after a lost password.
 - **Sessions are in memory**, so restarting the API signs everyone out. Fine for one instance; several instances would need a shared session store.

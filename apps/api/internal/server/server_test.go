@@ -363,8 +363,9 @@ func TestChatFlowChargesAndEncrypts(t *testing.T) {
 	if events[0].Name != "start" || events[1].Name != "delta" {
 		t.Fatalf("unexpected event order: %+v", events)
 	}
-	// 1000 prompt * $1/M + 100 completion * $2/M = 1000 + 200 micro-USD.
-	if got := e.available(); got != 5_000_000-1200 {
+	// 1000 prompt * $1/M + 100 completion * $2/M = 1200 micro-USD, which
+	// rounds up to 2 tokens ($0.002).
+	if got := e.available(); got != 5_000_000-2_000 {
 		t.Fatalf("available after chat = %d", got)
 	}
 
@@ -377,6 +378,9 @@ func TestChatFlowChargesAndEncrypts(t *testing.T) {
 	msgs := got["messages"].([]any)
 	if len(msgs) != 2 || msgs[1].(map[string]any)["content"] != "echo: the secret launch code is 0000" {
 		t.Fatalf("messages: %+v", msgs)
+	}
+	if usage := msgs[1].(map[string]any)["usage"].(map[string]any); usage["cost_micros"] != nil {
+		t.Fatalf("non-admin saw the message cost: %v", usage)
 	}
 	if got["chat"].(map[string]any)["title"] != "the secret launch code is 0000" {
 		t.Fatalf("title not set: %v", got["chat"])
@@ -395,7 +399,7 @@ func TestChatFlowChargesAndEncrypts(t *testing.T) {
 
 	ledger := e.must(200, "GET", "/api/billing/ledger", nil)["entries"].([]any)
 	usage := ledger[0].(map[string]any)
-	if usage["reason"] != "usage" || num(usage["delta_micros"]) != -1200 || num(usage["prompt_tokens"]) != 1000 {
+	if usage["reason"] != "usage" || num(usage["delta_micros"]) != -2000 || num(usage["delta_tokens"]) != -2 || num(usage["prompt_tokens"]) != 1000 {
 		t.Fatalf("ledger: %+v", usage)
 	}
 }
@@ -711,10 +715,14 @@ func TestToolSettingsAndToolLoop(t *testing.T) {
 	if len(steps) != 1 || step["tool"] != "calculator" || step["output"] != "42" || step["done"] != true {
 		t.Fatalf("steps: %v", steps)
 	}
-	// Both model calls are billed: 2 x (1000 prompt + 100 completion).
+	// Both model calls are billed: 2 x (1000 prompt + 100 completion), but
+	// the per-message cost is backoffice-only.
 	usage := msg["usage"].(map[string]any)
-	if num(usage["prompt_tokens"]) != 2000 || before-e.available() != num(usage["cost_micros"]) {
+	if num(usage["prompt_tokens"]) != 2000 || before-e.available() <= 0 {
 		t.Fatalf("usage %v, charged %d", usage, before-e.available())
+	}
+	if _, ok := usage["cost_micros"]; ok {
+		t.Fatalf("non-admin saw the message cost: %v", usage)
 	}
 
 	// Steps come back with the chat.

@@ -2,7 +2,6 @@ package billing
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,11 +34,21 @@ type Balance struct {
 	// Lifetime totals: credit bought and credit used.
 	PurchasedMicros int64 `json:"purchased_micros"`
 	UsedMicros      int64 `json:"used_micros"`
+
+	// The same amounts in user-facing token credits.
+	CreditTokens     int64 `json:"credit_tokens"`
+	HeldTokens       int64 `json:"held_tokens"`
+	AvailableTokens  int64 `json:"available_tokens"`
+	SpentTodayTokens int64 `json:"spent_today_tokens"`
+	DailyCapTokens   int64 `json:"daily_cap_tokens"`
+	PurchasedTokens  int64 `json:"purchased_tokens"`
+	UsedTokens       int64 `json:"used_tokens"`
 }
 
 type Entry struct {
 	ID               int64       `json:"id"`
 	DeltaMicros      int64       `json:"delta_micros"`
+	DeltaTokens      int64       `json:"delta_tokens"`
 	Reason           string      `json:"reason"`
 	Model            null.String `json:"model"`
 	PromptTokens     null.Int32  `json:"prompt_tokens"`
@@ -70,6 +79,13 @@ func (l *Ledger) balance(ctx context.Context, q querier, userID uuid.UUID) (Bala
 			COALESCE((SELECT -SUM(delta_micros) FROM credit_ledger WHERE user_id = $1 AND reason = 'usage'), 0)`,
 		userID).Scan(&b.CreditMicros, &b.HeldMicros, &b.SpentTodayMicros, &b.PurchasedMicros, &b.UsedMicros)
 	b.AvailableMicros = b.CreditMicros - b.HeldMicros
+	b.CreditTokens = Tokens(b.CreditMicros)
+	b.HeldTokens = Tokens(b.HeldMicros)
+	b.AvailableTokens = Tokens(b.AvailableMicros)
+	b.SpentTodayTokens = Tokens(b.SpentTodayMicros)
+	b.DailyCapTokens = Tokens(b.DailyCapMicros)
+	b.PurchasedTokens = Tokens(b.PurchasedMicros)
+	b.UsedTokens = Tokens(b.UsedMicros)
 	return b, err
 }
 
@@ -84,8 +100,9 @@ var (
 
 // Reserve places a hold for the worst-case cost of a request.
 func (l *Ledger) Reserve(ctx context.Context, userID uuid.UUID, amount int64) (uuid.UUID, error) {
-	if amount < 1 {
-		amount = 1
+	amount = RoundMicros(amount)
+	if amount < MicrosPerToken {
+		amount = MicrosPerToken
 	}
 	var holdID uuid.UUID
 	err := pgx.BeginFunc(ctx, l.DB, func(tx pgx.Tx) error {
@@ -118,6 +135,7 @@ func (l *Ledger) Reserve(ctx context.Context, userID uuid.UUID, amount int64) (u
 // the hold slightly if the estimate was low; the balance can then dip below
 // zero and the next Reserve will refuse.
 func (l *Ledger) Settle(ctx context.Context, userID, holdID uuid.UUID, u Usage) error {
+	charge := RoundMicros(u.CostMicros)
 	return pgx.BeginFunc(ctx, l.DB, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM credit_holds WHERE id = $1`, holdID); err != nil {
 			return err
@@ -125,7 +143,7 @@ func (l *Ledger) Settle(ctx context.Context, userID, holdID uuid.UUID, u Usage) 
 		_, err := tx.Exec(ctx, `
 			INSERT INTO credit_ledger (user_id, delta_micros, reason, model, prompt_tokens, completion_tokens)
 			VALUES ($1, $2, 'usage', $3, $4, $5)`,
-			userID, -u.CostMicros, u.Model, u.PromptTokens, u.CompletionTokens)
+			userID, -charge, u.Model, u.PromptTokens, u.CompletionTokens)
 		return err
 	})
 }
@@ -162,9 +180,15 @@ func (l *Ledger) History(ctx context.Context, userID uuid.UUID, limit int) ([]En
 	if err != nil {
 		return nil, err
 	}
-	entries, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Entry])
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+	defer rows.Close()
+	entries := []Entry{}
+	for rows.Next() {
+		var e Entry
+		if err := rows.Scan(&e.ID, &e.DeltaMicros, &e.Reason, &e.Model, &e.PromptTokens, &e.CompletionTokens, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.DeltaTokens = Tokens(e.DeltaMicros)
+		entries = append(entries, e)
 	}
-	return entries, err
+	return entries, rows.Err()
 }

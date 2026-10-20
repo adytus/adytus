@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { api, ApiError, usd, shortID, type LedgerEntry, type Plan } from '#lib/api.ts';
+	import { api, ApiError, usd, tokenCount, shortID, type LedgerEntry, type Plan } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
 	import Barcode from '#lib/components/Barcode.svelte';
 	import RouteBadge from '#lib/components/RouteBadge.svelte';
@@ -34,7 +34,7 @@
 		try {
 			const r = await api.subscribe(p.id);
 			app.balance = r.balance;
-			bought = `You subscribed for ${usd(p.price_micros, 0)}. ${usd(p.price_micros, 0)} of credit was added (receipt ${r.payment_ref}).`;
+			bought = `You subscribed for ${usd(p.price_micros, 0)}. ${tokenCount(p.credit_tokens)} tokens were added (receipt ${r.payment_ref}).`;
 			await loadLedger();
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Payment failed. Try again.';
@@ -60,7 +60,7 @@
 
 	const lines = ['blue', 'purple', 'red', 'yellow'] as const;
 	const b = $derived(app.balance);
-	const usedPct = $derived(b && b.purchased_micros > 0 ? Math.min(100, (b.used_micros / b.purchased_micros) * 100) : 0);
+	const usedPct = $derived(b && b.purchased_tokens > 0 ? Math.min(100, (b.used_tokens / b.purchased_tokens) * 100) : 0);
 	const fmtDate = (s: string) =>
 		new Date(s).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 </script>
@@ -73,26 +73,26 @@
 
 	<section aria-labelledby="usage-h">
 		<h2 id="usage-h">Usage</h2>
-		{#if b && b.purchased_micros > 0}
-			<p class="used"><strong>{usd(b.used_micros)}</strong> used of {usd(b.purchased_micros)}</p>
-			<div class="meter" role="img" aria-label="{Math.round(usedPct)}% of your credit used">
+		{#if b && b.purchased_tokens > 0}
+			<p class="used"><strong>{tokenCount(b.used_tokens)}</strong> used of {tokenCount(b.purchased_tokens)} tokens</p>
+			<div class="meter" role="img" aria-label="{Math.round(usedPct)}% of your tokens used">
 				<span style:width="{usedPct}%"></span>
 			</div>
 			<dl class="facts">
-				<div><dt>Left to spend</dt><dd>{usd(b.available_micros)}</dd></div>
-				{#if b.held_micros > 0}<div><dt>Held for a reply</dt><dd>{usd(b.held_micros)}</dd></div>{/if}
-				<div><dt>Spent today</dt><dd>{usd(b.spent_today_micros)} of {usd(b.daily_cap_micros)} daily limit</dd></div>
+				<div><dt>Left to spend</dt><dd>{tokenCount(b.available_tokens)} tokens</dd></div>
+				{#if b.held_tokens > 0}<div><dt>Held for a reply</dt><dd>{tokenCount(b.held_tokens)} tokens</dd></div>{/if}
+				<div><dt>Spent today</dt><dd>{tokenCount(b.spent_today_tokens)} of {tokenCount(b.daily_cap_tokens)} tokens</dd></div>
 			</dl>
 		{:else}
-			<p class="muted">You haven't added credit yet. Subscribe below to start chatting.</p>
+			<p class="muted">You don't have any tokens yet. Subscribe below to start chatting.</p>
 		{/if}
 	</section>
 
 	<section aria-labelledby="plans-h">
-		<h2 id="plans-h">Add credit</h2>
+		<h2 id="plans-h">Add tokens</h2>
 		<p class="muted">
-			Credit is spent per token as models reply and doesn't expire. Payment is simulated in this
-			build, so no card is needed.
+			Tokens are spent as models reply and don't expire. Payment is simulated in this build, so
+			no card is needed.
 		</p>
 		<div class="plans">
 			{#each plans as p, i (p.id)}
@@ -101,8 +101,8 @@
 						<RouteBadge line={lines[i % lines.length]} size={2.25}>{p.name[0]}</RouteBadge>
 						<span class="micro">Single fare · no expiry</span>
 					</div>
-					<p class="pay">{usd(p.price_micros, 0)}</p>
-					<p class="of">of credit</p>
+					<p class="credit">{tokenCount(p.credit_tokens)}</p>
+					<p class="of">tokens for {usd(p.price_micros, 0)}</p>
 					<div class="foot">
 						<Barcode value={p.id.toUpperCase()} height={18} />
 						<button class="btn primary" disabled={buying !== ''} onclick={() => subscribe(p)}>
@@ -130,7 +130,7 @@
 							<th scope="col">Item</th>
 							<th scope="col" class="num">Tokens in</th>
 							<th scope="col" class="num">Tokens out</th>
-							<th scope="col" class="num">Amount</th>
+							<th scope="col" class="num">Tokens</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -144,8 +144,8 @@
 								</td>
 								<td class="num">{e.prompt_tokens?.toLocaleString() ?? ''}</td>
 								<td class="num">{e.completion_tokens?.toLocaleString() ?? ''}</td>
-								<td class="num" class:plus={e.delta_micros > 0}>
-									{e.delta_micros > 0 ? '+' : '−'}{usd(Math.abs(e.delta_micros))}
+								<td class="num" class:plus={e.delta_tokens > 0}>
+									{e.delta_tokens > 0 ? '+' : '−'}{tokenCount(Math.abs(e.delta_tokens))}
 								</td>
 							</tr>
 						{/each}
@@ -225,13 +225,8 @@
 		justify-content: space-between;
 		align-items: center;
 	}
-	.pay {
-		margin: 0.75rem 0 0;
-		font-weight: 700;
-		font-size: 1.125rem;
-	}
 	.credit {
-		margin: 0.125rem 0 0;
+		margin: 0.75rem 0 0;
 		font-size: 3.25rem;
 		font-weight: 900;
 		font-stretch: 65%;

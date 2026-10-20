@@ -38,6 +38,22 @@ export type Offer = {
 	zdr: boolean;
 };
 export type State = { providers: Provider[]; models: AdminModel[] };
+export type UserUsage = {
+	id: string;
+	email: string;
+	is_admin: boolean;
+	created_at: string;
+	available_tokens: number;
+	held_tokens: number;
+	purchased_tokens: number;
+	used_tokens: number;
+	spent_today_tokens: number;
+	daily_cap_tokens: number;
+	prompt_tokens: number;
+	completion_tokens: number;
+	requests: number;
+	used_micros: number;
+};
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
 	const res = await fetch(`/api/backoffice${path}`, {
@@ -60,6 +76,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
 	state: () => call<State>('GET', ''),
+	users: () => call<{ users: UserUsage[] }>('GET', '/users'),
 	// api_key: undefined keeps the saved key, '' clears it.
 	putProvider: (id: string, base_url: string, api_key?: string) =>
 		call<State>('PUT', `/providers/${id}`, { base_url, api_key }),

@@ -1,10 +1,11 @@
 export type User = { id: string; email: string; created_at: string };
-export type Plan = { id: string; name: string; price_micros: number };
+export type Plan = { id: string; name: string; price_micros: number; credit_tokens: number };
 export type Model = {
 	id: string;
 	name: string;
-	prompt_usd_per_mtok: number;
-	completion_usd_per_mtok: number;
+	// Prices are only sent to backoffice users.
+	prompt_usd_per_mtok?: number;
+	completion_usd_per_mtok?: number;
 	context_tokens: number;
 	max_output_tokens: number;
 	vision: boolean;
@@ -20,10 +21,18 @@ export type Balance = {
 	daily_cap_micros: number;
 	purchased_micros: number;
 	used_micros: number;
+	credit_tokens: number;
+	held_tokens: number;
+	available_tokens: number;
+	spent_today_tokens: number;
+	daily_cap_tokens: number;
+	purchased_tokens: number;
+	used_tokens: number;
 };
 export type LedgerEntry = {
 	id: number;
 	delta_micros: number;
+	delta_tokens: number;
 	reason: string;
 	model: string | null;
 	prompt_tokens: number | null;
@@ -38,7 +47,8 @@ export type Chat = {
 	created_at: string;
 	updated_at: string;
 };
-export type Usage = { prompt_tokens: number; completion_tokens: number; cost_micros: number };
+// cost_micros is only sent to backoffice users.
+export type Usage = { prompt_tokens: number; completion_tokens: number; cost_micros?: number };
 // SavedFile is a file a tool saved to the user's files.
 export type SavedFile = { id: string; name: string; image?: boolean; size: number };
 export type ToolStep = {
@@ -235,6 +245,9 @@ export async function sendMessage(
 		}
 	}
 }
+
+export const tokenCount = (tokens: number) =>
+	tokens.toLocaleString(undefined, { maximumFractionDigits: 0 });
 
 export const usd = (micros: number, digits = 2) => {
 	const v = micros / 1_000_000;

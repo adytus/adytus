@@ -24,6 +24,23 @@ type authCtx struct {
 
 func mustAuth(c fiber.Ctx) *authCtx { return c.Locals("auth").(*authCtx) }
 
+// isBackoffice reports whether the request belongs to an admin. It works on
+// routes without requireSession too, so public responses can keep their
+// admin-only details hidden.
+func (s *Server) isBackoffice(c fiber.Ctx) bool {
+	if a, ok := c.Locals("auth").(*authCtx); ok {
+		admin, err := s.Store.IsAdmin(c.Context(), a.UserID)
+		return err == nil && admin
+	}
+	userID, mk, ok := s.Sessions.Get(c.Cookies(sessionCookie))
+	if !ok {
+		return false
+	}
+	crypto.Zero(mk)
+	admin, err := s.Store.IsAdmin(c.Context(), userID)
+	return err == nil && admin
+}
+
 func (s *Server) requireSession(c fiber.Ctx) error {
 	token := c.Cookies(sessionCookie)
 	userID, mk, ok := s.Sessions.Get(token)

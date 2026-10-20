@@ -6,8 +6,15 @@
 		models,
 		value,
 		disabled = false,
+		showPrices = false,
 		onchange
-	}: { models: Model[]; value: string; disabled?: boolean; onchange: (id: string) => void } = $props();
+	}: {
+		models: Model[];
+		value: string;
+		disabled?: boolean;
+		showPrices?: boolean;
+		onchange: (id: string) => void;
+	} = $props();
 
 	let open = $state(false);
 	let root = $state<HTMLElement>();
@@ -68,9 +75,11 @@
 						<ModelIcon icon={m.icon} size={2} />
 						<span class="info">
 							<span class="oname">{m.name}</span>
-							<span class="meta">
-								{price(m.prompt_usd_per_mtok)} in, {price(m.completion_usd_per_mtok)} out per million tokens
-							</span>
+							{#if showPrices}
+								<span class="meta">
+									{price(m.prompt_usd_per_mtok ?? 0)} in, {price(m.completion_usd_per_mtok ?? 0)} out per million tokens
+								</span>
+							{/if}
 							<span class="caps">
 								{#if m.vision}<span>Sees images</span>{/if}
 								{#if m.tools}<span>Uses tools</span>{/if}

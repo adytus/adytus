@@ -51,7 +51,7 @@
 	let input = $state<HTMLTextAreaElement>();
 
 	const model = $derived(app.model(modelID));
-	const maxHold = $derived(model ? (model.max_output_tokens * model.completion_usd_per_mtok) : 0);
+	const maxHold = $derived(model ? model.max_output_tokens * (model.completion_usd_per_mtok ?? 0) : 0);
 
 	$effect(() => {
 		const id = chatID;
@@ -317,7 +317,13 @@
 			<h1 class="title static">New chat</h1>
 		{/if}
 		<div class="controls">
-			<ModelPicker models={app.models} value={modelID} disabled={streaming} onchange={changeModel} />
+			<ModelPicker
+				models={app.models}
+				value={modelID}
+				disabled={streaming}
+				showPrices={app.can('backoffice')}
+				onchange={changeModel}
+			/>
 			{#if chat}
 				<button class="quiet danger" onclick={remove}>Delete chat</button>
 			{/if}
@@ -340,11 +346,15 @@
 							<ModelIcon icon={model.icon} size={2.5} />
 							<div>
 								<p class="rider-name">{model.name}</p>
-								<p class="muted">
-									{perMTok(model.prompt_usd_per_mtok)} per million tokens in, {perMTok(model.completion_usd_per_mtok)} out.
-									{#if model.tools}It can use the tools switched on in <a href="/settings">Settings</a>.{/if}
-									{#if model.vision}It can read images you attach.{/if}
-								</p>
+								{#if app.can('backoffice') || model.tools || model.vision}
+									<p class="muted">
+										{#if app.can('backoffice')}
+											{perMTok(model.prompt_usd_per_mtok ?? 0)} per million tokens in, {perMTok(model.completion_usd_per_mtok ?? 0)} out.
+										{/if}
+										{#if model.tools}It can use the tools switched on in <a href="/settings">Settings</a>.{/if}
+										{#if model.vision}It can read images you attach.{/if}
+									</p>
+								{/if}
 							</div>
 						</div>
 					{/if}
@@ -387,7 +397,9 @@
 							{#if m.usage}
 								<span>{m.usage.prompt_tokens.toLocaleString()} in</span>
 								<span>{m.usage.completion_tokens.toLocaleString()} out</span>
-								<span class="fare">{usd(m.usage.cost_micros)}</span>
+								{#if app.can('backoffice') && m.usage.cost_micros != null}
+									<span class="fare">{usd(m.usage.cost_micros)}</span>
+								{/if}
 							{/if}
 							{#if m.partial}<span class="cut">Stopped early</span>{/if}
 						</p>
@@ -406,7 +418,7 @@
 					{/if}
 					{#if liveText}<Markdown text={liveText} live />{:else}<p class="text"><span class="caret"></span></p>{/if}
 					<p class="receipt">
-						{#if holdMicros}<span>Holding up to {usd(holdMicros)}</span>{:else}<span>Reserving fare…</span>{/if}
+						{#if app.can('backoffice') && holdMicros}<span>Holding up to {usd(holdMicros)}</span>{:else}<span>Reserving fare…</span>{/if}
 					</p>
 				</article>
 			{/if}
@@ -495,7 +507,7 @@
 					<button class="btn primary" disabled={!draft.trim()}>Send</button>
 				{/if}
 			</div>
-			{#if model}
+			{#if model && app.can('backoffice')}
 				<p class="hint">Each reply reserves up to {usd(maxHold)} and is charged by the token when it finishes.</p>
 			{/if}
 		</div>

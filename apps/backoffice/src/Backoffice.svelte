@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Alert from '../../web/src/lib/components/Alert.svelte';
 	import ModelIcon from '../../web/src/lib/components/ModelIcon.svelte';
-	import { api, providerName, type AdminModel, type State } from './api.ts';
+	import { api, providerName, type AdminModel, type State, type UserUsage } from './api.ts';
 	import ProviderCard from './ProviderCard.svelte';
 	import ModelForm from './ModelForm.svelte';
 	import Catalog from './Catalog.svelte';
@@ -15,12 +15,32 @@
 	let editing = $state<AdminModel | null>(null);
 	let browsing = $state(false);
 	let filter = $state('');
+	let tab = $state<'models' | 'users'>('models');
+	let users = $state<UserUsage[] | null>(null);
+	let usersBusy = $state(false);
+	let usersError = $state('');
 
 	$effect(() => {
 		api.state().then(
 			(s) => (st = s),
 			(err) => (error = err.message)
 		);
+	});
+
+	async function loadUsers() {
+		usersBusy = true;
+		usersError = '';
+		try {
+			users = (await api.users()).users;
+		} catch (err) {
+			usersError = (err as Error).message;
+		} finally {
+			usersBusy = false;
+		}
+	}
+
+	$effect(() => {
+		if (tab === 'users' && users === null && !usersBusy && !usersError) void loadUsers();
 	});
 
 	async function run(key: string, fn: () => Promise<State>) {
@@ -78,6 +98,9 @@
 
 	const price = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
 	const tokens = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}K` : `${n}`);
+	const count = (n: number) => n.toLocaleString();
+	const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
+	const joined = (s: string) => new Date(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 </script>
 
 <div class="page">
@@ -96,6 +119,16 @@
 	{#if !st}
 		{#if !error}<p class="muted">Loading…</p>{/if}
 	{:else}
+		<nav class="menu" aria-label="Backoffice sections">
+			<button type="button" aria-current={tab === 'models' ? 'page' : undefined} onclick={() => (tab = 'models')}>
+				Models
+			</button>
+			<button type="button" aria-current={tab === 'users' ? 'page' : undefined} onclick={() => (tab = 'users')}>
+				Users
+			</button>
+		</nav>
+
+		{#if tab === 'models'}
 		<section aria-labelledby="prov-h">
 			<h2 id="prov-h">Providers</h2>
 			<p class="muted">
@@ -211,6 +244,67 @@
 				<p class="muted">No model matches “{filter}”.</p>
 			{/if}
 		</section>
+		{:else}
+		<section aria-labelledby="users-h">
+			<div class="row">
+				<h2 id="users-h">Users</h2>
+				<button class="btn" disabled={usersBusy} onclick={loadUsers}>
+					{usersBusy ? 'Refreshing…' : 'Refresh'}
+				</button>
+			</div>
+			<p class="muted">
+				Accounts and their token budgets. Only billing and token counts are shown; chats and files
+				stay encrypted and unreadable here.
+			</p>
+			{#if usersError}
+				<Alert title="Could not load users" ondismiss={() => (usersError = '')}><p>{usersError}</p></Alert>
+			{/if}
+			{#if usersBusy && !users}
+				<p class="muted">Loading…</p>
+			{:else if users}
+				{#if users.length === 0}
+					<p class="muted">No accounts yet.</p>
+				{:else}
+					<div class="table-wrap">
+						<table>
+							<thead>
+								<tr>
+									<th scope="col">User</th>
+									<th scope="col">Access</th>
+									<th scope="col" class="num">Available</th>
+									<th scope="col" class="num">Used</th>
+									<th scope="col" class="num">Today</th>
+									<th scope="col" class="num">Tokens in</th>
+									<th scope="col" class="num">Tokens out</th>
+									<th scope="col" class="num">Calls</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each users as u (u.id)}
+									<tr>
+										<td>
+											<span class="email">{u.email}</span>
+											<span class="sub">Joined {joined(u.created_at)}</span>
+										</td>
+										<td>{u.is_admin ? 'Admin' : 'Member'}</td>
+										<td class="num">{count(u.available_tokens)}</td>
+										<td class="num">
+											{count(u.used_tokens)}
+											<span class="sub">{usd(u.used_micros)}</span>
+										</td>
+										<td class="num">{count(u.spent_today_tokens)} / {count(u.daily_cap_tokens)}</td>
+										<td class="num">{count(u.prompt_tokens)}</td>
+										<td class="num">{count(u.completion_tokens)}</td>
+										<td class="num">{count(u.requests)}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			{/if}
+		</section>
+		{/if}
 	{/if}
 </div>
 
@@ -333,6 +427,62 @@
 	}
 	.count {
 		font-size: 0.875rem;
+		color: var(--muted);
+	}
+	.menu {
+		display: flex;
+		gap: 0.5rem;
+		border-bottom: 1px solid var(--rule);
+		padding-bottom: 0.75rem;
+	}
+	.menu button {
+		font: inherit;
+		font-weight: 700;
+		padding: 0.4rem 0.9rem;
+		border: 1px solid var(--rule);
+		border-radius: 999px;
+		background: var(--surface);
+		color: var(--paper);
+		cursor: pointer;
+	}
+	.menu button[aria-current='page'] {
+		background: var(--line-purple);
+		border-color: var(--line-purple);
+		color: var(--black);
+	}
+	.table-wrap {
+		overflow-x: auto;
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.875rem;
+		font-variant-numeric: tabular-nums;
+	}
+	th {
+		text-align: left;
+		font-weight: 600;
+		color: var(--muted);
+		padding: 0.5rem 0.75rem 0.5rem 0;
+		border-bottom: 2px solid var(--rule);
+		white-space: nowrap;
+	}
+	td {
+		padding: 0.6rem 0.75rem 0.6rem 0;
+		border-bottom: 1px solid var(--rule);
+		vertical-align: top;
+		white-space: nowrap;
+	}
+	.num {
+		text-align: right;
+	}
+	.email {
+		display: block;
+		font-weight: 700;
+	}
+	.sub {
+		display: block;
+		font-size: 0.75rem;
 		color: var(--muted);
 	}
 	.switch {

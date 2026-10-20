@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/reaganiwadha/adytus/apps/api/internal/billing"
 	"github.com/reaganiwadha/adytus/apps/api/internal/errs"
 	"github.com/reaganiwadha/adytus/apps/api/internal/llm"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
@@ -28,6 +29,7 @@ const privBackoffice = "backoffice"
 func (s *Server) backofficeRoutes(me fiber.Router) {
 	bo := me.Group("/backoffice", s.requireAdmin)
 	bo.Get("", s.backofficeState)
+	bo.Get("/users", s.backofficeUsers)
 	bo.Put("/providers/:id", s.putProvider)
 	bo.Post("/providers/:id/test", s.testProvider)
 	bo.Get("/providers/:id/offers", s.providerOffers)
@@ -216,6 +218,54 @@ type adminModelView struct {
 	Enabled   bool      `json:"enabled"`
 	Default   bool      `json:"default"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type adminUserView struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	IsAdmin   bool      `json:"is_admin"`
+	CreatedAt time.Time `json:"created_at"`
+
+	AvailableTokens  int64 `json:"available_tokens"`
+	HeldTokens       int64 `json:"held_tokens"`
+	PurchasedTokens  int64 `json:"purchased_tokens"`
+	UsedTokens       int64 `json:"used_tokens"`
+	SpentTodayTokens int64 `json:"spent_today_tokens"`
+	DailyCapTokens   int64 `json:"daily_cap_tokens"`
+
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	Requests         int64 `json:"requests"`
+	UsedMicros       int64 `json:"used_micros"`
+}
+
+func (s *Server) backofficeUsers(c fiber.Ctx) error {
+	rows, err := store.Users(c.Context(), s.Store.DB)
+	if err != nil {
+		return err
+	}
+	capTokens := billing.Tokens(s.Ledger.DailyCapMicros)
+	users := make([]adminUserView, 0, len(rows))
+	for _, u := range rows {
+		available := u.CreditMicros - u.HeldMicros
+		users = append(users, adminUserView{
+			ID:               u.ID,
+			Email:            u.Email,
+			IsAdmin:          u.IsAdmin,
+			CreatedAt:        u.CreatedAt,
+			AvailableTokens:  billing.Tokens(available),
+			HeldTokens:       billing.Tokens(u.HeldMicros),
+			PurchasedTokens:  billing.Tokens(u.PurchasedMicros),
+			UsedTokens:       billing.Tokens(u.UsedMicros),
+			SpentTodayTokens: billing.Tokens(u.SpentTodayMicros),
+			DailyCapTokens:   capTokens,
+			PromptTokens:     u.PromptTokens,
+			CompletionTokens: u.CompletionTokens,
+			Requests:         u.Requests,
+			UsedMicros:       u.UsedMicros,
+		})
+	}
+	return c.JSON(fiber.Map{"users": users})
 }
 
 func keyHint(key string) string {

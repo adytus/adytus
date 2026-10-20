@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -125,7 +126,32 @@ func (s *Server) health(c fiber.Ctx) error {
 
 func (s *Server) listModels(c fiber.Ctx) error {
 	cat := s.LLM.Current().Catalog
-	return c.JSON(fiber.Map{"models": cat.Models, "default": cat.Default().ID})
+	models := any(cat.Models)
+	if !s.isBackoffice(c) {
+		models = withoutModelPrices(cat.Models)
+	}
+	return c.JSON(fiber.Map{"models": models, "default": cat.Default().ID})
+}
+
+// withoutModelPrices strips the per-token prices from a catalog for ordinary
+// users. They only need model names and capabilities; prices stay available
+// to the backoffice and to admins using the chat.
+func withoutModelPrices(models []llm.Model) []map[string]any {
+	out := make([]map[string]any, 0, len(models))
+	for _, m := range models {
+		raw, err := json.Marshal(m)
+		if err != nil {
+			continue
+		}
+		var view map[string]any
+		if err := json.Unmarshal(raw, &view); err != nil {
+			continue
+		}
+		delete(view, "prompt_usd_per_mtok")
+		delete(view, "completion_usd_per_mtok")
+		out = append(out, view)
+	}
+	return out
 }
 
 func (s *Server) listPlans(c fiber.Ctx) error {

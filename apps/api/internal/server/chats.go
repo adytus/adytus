@@ -51,9 +51,28 @@ type attachment struct {
 }
 
 type messageUsage struct {
-	PromptTokens     int   `json:"prompt_tokens"`
-	CompletionTokens int   `json:"completion_tokens"`
-	CostMicros       int64 `json:"cost_micros"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	// CostMicros is only serialized for backoffice users; zero omits it.
+	CostMicros int64 `json:"cost_micros,omitempty"`
+}
+
+// withoutMessageCost returns a copy that leaves the charge out of the API view
+// while keeping the stored message intact.
+func withoutMessageCost(b messageBody) messageBody {
+	if b.Usage == nil {
+		return b
+	}
+	u := *b.Usage
+	u.CostMicros = 0
+	b.Usage = &u
+	return b
+}
+
+func withoutMessageCosts(msgs []messageView) {
+	for i := range msgs {
+		msgs[i].messageBody = withoutMessageCost(msgs[i].messageBody)
+	}
 }
 
 type messageBody struct {
@@ -194,6 +213,9 @@ func (s *Server) getChat(c fiber.Ctx) error {
 	msgs, err := s.loadMessages(c.Context(), mustAuth(c), o.ID)
 	if err != nil {
 		return err
+	}
+	if !s.isBackoffice(c) {
+		withoutMessageCosts(msgs)
 	}
 	return c.JSON(fiber.Map{"chat": viewChat(o, meta), "messages": msgs})
 }
@@ -533,6 +555,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	}
 
 	userID := a.UserID
+	backoffice := s.isBackoffice(c)
 	streaming = true
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
@@ -641,8 +664,12 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 
 		reply := messageBody{
 			Role: "assistant", Content: content.String(), Model: spec.ID, Partial: streamErr != nil,
-			Usage: &messageUsage{usage.PromptTokens, usage.CompletionTokens, usage.CostMicros},
+			Usage: &messageUsage{PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens, CostMicros: usage.CostMicros},
 			Steps: steps,
+		}
+		viewReply := reply
+		if !backoffice {
+			viewReply = withoutMessageCost(reply)
 		}
 		if prepared.chatDEK != nil {
 			if t := <-titled; t != "" {
@@ -664,7 +691,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		}
 		balance, _ := s.Ledger.Balance(ctx, userID)
 		_ = send("done", fiber.Map{
-			"message":      messageView{prepared.replyObj.ID, reply, prepared.replyObj.CreatedAt},
+			"message":      messageView{prepared.replyObj.ID, viewReply, prepared.replyObj.CreatedAt},
 			"user_message": messageView{prepared.userObj.ID, userMsg, prepared.userObj.CreatedAt},
 			"balance":      balance,
 		})
