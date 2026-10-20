@@ -22,6 +22,25 @@ adytus/
   compose.yaml   Postgres, SeaweedFS (S3) and Ollama for local dev
 ```
 
+## Push targets
+
+The monorepo is published to three remotes:
+
+| Remote | Repository | Contents |
+| --- | --- | --- |
+| `origin` | `gecenterprises/adytus` | full monorepo |
+| `backend` | `reaganiwadha/adytus-backend` | full monorepo mirror (Railway) |
+| `ui` | `reaganiwadha/adytus-ui` | `apps/web` subtree only (Vercel) |
+
+```sh
+git remote add backend https://github.com/reaganiwadha/adytus-backend
+git remote add ui https://github.com/reaganiwadha/adytus-ui
+
+git push origin main
+git push backend main
+git subtree push --prefix apps/web ui main
+```
+
 ## Running locally
 
 ```sh

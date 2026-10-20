@@ -1,56 +1,39 @@
-# sv
+# Adytus UI
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+SvelteKit frontend for Adytus, the private, encrypted chatbot for enterprise.
 
-## Creating a project
+This directory is also published on its own to
+[`reaganiwadha/adytus-ui`](https://github.com/reaganiwadha/adytus-ui) for
+Vercel. The source of truth is the `apps/web` subtree of the monorepo.
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Push targets
 
-```sh
-# create a new project
-npx sv create my-app
-```
+| Remote | Repository | Contents |
+| --- | --- | --- |
+| `origin` | `gecenterprises/adytus` | full monorepo |
+| `backend` | `reaganiwadha/adytus-backend` | full monorepo mirror (Railway) |
+| `ui` | `reaganiwadha/adytus-ui` | this `apps/web` subtree (Vercel) |
 
-To recreate this project with the same configuration:
-
-```sh
-# recreate this project
-bun x sv@1.1.1 create --template minimal --types ts --install bun web
-```
-
-## Adding features
-
-Add features to your project with `sv add`:
+From the monorepo root:
 
 ```sh
-npx sv add
-```
-
-For example, to add Tailwind CSS:
-
-```sh
-npx sv add tailwindcss
+git push origin main
+git push backend main
+git subtree push --prefix apps/web ui main
 ```
 
 ## Developing
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+bun install
+bun run dev
 ```
 
 ## Building
 
-To create a production version of your app:
-
 ```sh
-npm run build
+bun run check
+bun run build
 ```
 
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+The API URL is configured in `vite.config.ts` / `vercel.json`.
