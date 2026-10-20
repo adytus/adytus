@@ -210,6 +210,11 @@ func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 		t.Fatal(err)
 	}
 	fake := &fakeLLM{}
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(ollama.Close)
 	blobs := blob.NewMemory()
 	srv := New(Deps{
 		Config: cfg,
@@ -227,7 +232,7 @@ func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 	for i := range models {
 		models[i].Provider = llm.Ollama
 	}
-	if err := srv.SeedLLM(ctx, llm.Provider{ID: llm.Ollama}, func() (*llm.Catalog, error) {
+	if err := srv.SeedLLM(ctx, llm.Provider{ID: llm.Ollama, BaseURL: ollama.URL}, func() (*llm.Catalog, error) {
 		return llm.NewCatalog(models)
 	}); err != nil {
 		t.Fatal(err)
@@ -334,6 +339,22 @@ func num(v any) int64 { f, _ := v.(float64); return int64(f) }
 func (e *env) available() int64 {
 	out := e.must(200, "GET", "/api/billing/balance", nil)
 	return num(out["balance"].(map[string]any)["available_micros"])
+}
+
+func TestVisibleModelsPreferDeepSeekAndHideOfflineOllama(t *testing.T) {
+	models := []llm.Model{
+		{ID: "qwen", Provider: llm.Ollama},
+		{ID: preferredModelID, Provider: llm.OpenRouter},
+		{ID: "glm", Provider: llm.OpenRouter},
+	}
+	got := visibleModels(models, false)
+	if len(got) != 2 || got[0].ID != preferredModelID || got[1].ID != "glm" {
+		t.Fatalf("without Ollama: %v", got)
+	}
+	got = visibleModels(models, true)
+	if len(got) != 3 || got[0].ID != preferredModelID {
+		t.Fatalf("with Ollama: %v", got)
+	}
 }
 
 func TestChatFlowChargesAndEncrypts(t *testing.T) {

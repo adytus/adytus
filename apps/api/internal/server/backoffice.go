@@ -150,6 +150,15 @@ func (s *Server) buildLLM(ctx context.Context, q store.DBTX) (*llm.Snapshot, err
 	if len(models) == 0 {
 		return nil, errs.Validation.New("at least one model must stay enabled")
 	}
+	// With no explicit backoffice default, new chats use the preferred model.
+	if def == "" {
+		for _, m := range models {
+			if m.ID == preferredModelID {
+				def = m.ID
+				break
+			}
+		}
+	}
 	cat, err := llm.NewCatalog(models)
 	if err != nil {
 		return nil, errs.Validation.New("%s", err.Error())

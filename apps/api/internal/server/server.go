@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 	"time"
@@ -39,7 +40,17 @@ type Server struct {
 	kdfSlots chan struct{}
 	// llmMu orders backoffice changes, so swaps land in commit order.
 	llmMu sync.Mutex
+	// providerMu guards the cached Ollama reachability check.
+	providerMu      sync.Mutex
+	ollamaCheckedAt time.Time
+	ollamaUp        bool
 }
+
+// preferredModelID is offered first and is the fallback default when the
+// backoffice has not chosen one explicitly.
+const preferredModelID = "deepseek-v4.1-flash"
+
+const providerCheckTTL = 30 * time.Second
 
 type structValidator struct{ v *validator.Validate }
 
@@ -126,11 +137,66 @@ func (s *Server) health(c fiber.Ctx) error {
 
 func (s *Server) listModels(c fiber.Ctx) error {
 	cat := s.LLM.Current().Catalog
-	models := any(cat.Models)
-	if !s.isBackoffice(c) {
-		models = withoutModelPrices(cat.Models)
+	visible := visibleModels(cat.Models, s.ollamaActive(c.Context()))
+	def := cat.Default().ID
+	found := false
+	for _, m := range visible {
+		if m.ID == def {
+			found = true
+			break
+		}
 	}
-	return c.JSON(fiber.Map{"models": models, "default": cat.Default().ID})
+	if !found {
+		def = ""
+		if len(visible) > 0 {
+			def = visible[0].ID
+		}
+	}
+	var models any = visible
+	if !s.isBackoffice(c) {
+		models = withoutModelPrices(visible)
+	}
+	return c.JSON(fiber.Map{"models": models, "default": def})
+}
+
+// visibleModels drops Ollama models when its endpoint is down and puts the
+// preferred model first.
+func visibleModels(models []llm.Model, ollamaUp bool) []llm.Model {
+	out := make([]llm.Model, 0, len(models))
+	for _, m := range models {
+		if m.Provider == llm.Ollama && !ollamaUp {
+			continue
+		}
+		if m.ID == preferredModelID {
+			out = append([]llm.Model{m}, out...)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// ollamaActive reports whether the configured Ollama endpoint answers. The
+// result is cached briefly so opening the model picker does not probe it every
+// time.
+func (s *Server) ollamaActive(ctx context.Context) bool {
+	s.providerMu.Lock()
+	defer s.providerMu.Unlock()
+	if !s.ollamaCheckedAt.IsZero() && time.Since(s.ollamaCheckedAt) < providerCheckTTL {
+		return s.ollamaUp
+	}
+	p, ok := s.LLM.Current().Provider(llm.Ollama)
+	if !ok || p.BaseURL == "" {
+		s.ollamaCheckedAt = time.Now()
+		s.ollamaUp = false
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := llm.Probe(probeCtx, p)
+	s.ollamaCheckedAt = time.Now()
+	s.ollamaUp = err == nil
+	return s.ollamaUp
 }
 
 // withoutModelPrices strips the per-token prices from a catalog for ordinary

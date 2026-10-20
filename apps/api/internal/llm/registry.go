@@ -42,12 +42,19 @@ func DialOpenAI(ctx context.Context, p Provider) (model.ToolCallingChatModel, er
 
 // Snapshot is a catalog together with the chat models that serve it.
 type Snapshot struct {
-	Catalog *Catalog
-	models  map[string]model.ToolCallingChatModel
+	Catalog   *Catalog
+	models    map[string]model.ToolCallingChatModel
+	providers map[string]Provider
 }
 
 // ChatModel returns the chat model that serves m.
 func (s *Snapshot) ChatModel(m Model) model.ToolCallingChatModel { return s.models[m.Provider] }
+
+// Provider returns the endpoint that serves a provider id.
+func (s *Snapshot) Provider(id string) (Provider, bool) {
+	p, ok := s.providers[id]
+	return p, ok
+}
 
 // Registry holds the live snapshot. The backoffice swaps it at run time;
 // a request takes one snapshot and keeps it, so a change never mixes the
@@ -70,7 +77,14 @@ func (r *Registry) Build(ctx context.Context, c *Catalog, providers []Provider) 
 	for _, p := range providers {
 		byID[p.ID] = p
 	}
-	s := &Snapshot{Catalog: c, models: map[string]model.ToolCallingChatModel{}}
+	s := &Snapshot{
+		Catalog:   c,
+		models:    map[string]model.ToolCallingChatModel{},
+		providers: map[string]Provider{},
+	}
+	for _, p := range providers {
+		s.providers[p.ID] = p
+	}
 	for _, m := range c.Models {
 		if _, done := s.models[m.Provider]; done {
 			continue
