@@ -17,8 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/flow/agent/react"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -528,7 +527,6 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	// plain 402.
 	chatModel := snap.ChatModel(spec)
 	mm := meter.New(chatModel, s.Ledger, a.UserID, spec)
-	reserver := mm
 	if len(toolIDs) > 0 {
 		infos, err := s.Tools.ToolInfos(ctx, toolIDs)
 		if err != nil {
@@ -538,9 +536,11 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		if err != nil {
 			return err
 		}
-		reserver = withTools.(*meter.Model)
+		// The tool-bound copy shares the meter's state, so the hold and every
+		// call in the loop settle on the same totals.
+		mm = withTools.(*meter.Model)
 	}
-	holdAmount, err := reserver.Reserve(ctx, prompt)
+	holdAmount, err := mm.Reserve(ctx, prompt)
 	if err != nil {
 		return err
 	}
@@ -697,23 +697,89 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	})
 }
 
-// reply streams the model's answer. With tools it runs a ReAct loop: the
+// reply streams the model's answer. With tools it runs the loop itself: the
 // model may call tools any number of times (each call metered and billed)
-// before its final answer, which is what the stream carries.
-func (s *Server) reply(ctx context.Context, mm *meter.Model, prompt []*schema.Message, toolIDs []string, observe tools.Observer) (*schema.StreamReader[*schema.Message], error) {
+// before its final answer. Text the model writes before a tool call streams
+// like any other delta, so a model that narrates first ("I'll open the files")
+// still gets its calls run. Eino's ReAct agent could not: its default stream
+// checker treats the first text chunk as proof that the reply is finished and
+// drops the tool call that follows it.
+func (s *Server) reply(ctx context.Context, mm model.ToolCallingChatModel, prompt []*schema.Message, toolIDs []string, observe tools.Observer) (*schema.StreamReader[*schema.Message], error) {
 	if len(toolIDs) == 0 {
 		return mm.Stream(ctx, prompt)
 	}
-	agent, err := react.NewAgent(ctx, &react.AgentConfig{
-		ToolCallingModel: mm,
-		ToolsConfig:      compose.ToolsNodeConfig{Tools: s.Tools.Tools(toolIDs, observe)},
-		// Each round is a model node and a tools node, plus the final answer.
-		MaxStep: 2*s.Config.ToolMaxSteps + 1,
-	})
-	if err != nil {
-		return nil, err
+	byName := map[string]tool.InvokableTool{}
+	for _, t := range s.Tools.Tools(toolIDs, observe) {
+		info, err := t.Info(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if invokable, ok := t.(tool.InvokableTool); ok {
+			byName[info.Name] = invokable
+		}
 	}
-	return agent.Stream(ctx, prompt)
+
+	out, sw := schema.Pipe[*schema.Message](8)
+	go func() {
+		defer sw.Close()
+		messages := append([]*schema.Message(nil), prompt...)
+		for round := 0; round <= s.Config.ToolMaxSteps; round++ {
+			sr, err := mm.Stream(ctx, messages)
+			if err != nil {
+				_ = sw.Send(nil, err)
+				return
+			}
+			var chunks []*schema.Message
+			for {
+				msg, err := sr.Recv()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					sr.Close()
+					_ = sw.Send(nil, err)
+					return
+				}
+				chunks = append(chunks, msg)
+				// Stream text as it arrives, including a preamble to a tool
+				// call, so the user sees progress either way.
+				if (msg.Content != "" || msg.ReasoningContent != "") && sw.Send(msg, nil) {
+					sr.Close()
+					return
+				}
+			}
+			sr.Close()
+			if len(chunks) == 0 {
+				return
+			}
+			full, err := schema.ConcatMessages(chunks)
+			if err != nil {
+				_ = sw.Send(nil, err)
+				return
+			}
+			if len(full.ToolCalls) == 0 {
+				return
+			}
+			if round == s.Config.ToolMaxSteps {
+				break
+			}
+			messages = append(messages, full)
+			for _, call := range full.ToolCalls {
+				result := fmt.Sprintf("error: no tool named %q", call.Function.Name)
+				if invokable, ok := byName[call.Function.Name]; ok {
+					out, runErr := invokable.InvokableRun(ctx, call.Function.Arguments)
+					result = out
+					if runErr != nil {
+						// Errors go back to the model as text so it can recover.
+						result = "error: " + runErr.Error()
+					}
+				}
+				messages = append(messages, schema.ToolMessage(result, call.ID, schema.WithToolName(call.Function.Name)))
+			}
+		}
+		_ = sw.Send(nil, fmt.Errorf("the model kept calling tools for more than %d rounds", s.Config.ToolMaxSteps))
+	}()
+	return out, nil
 }
 
 // preparedReply holds the sealed user message and the reply's object and key,

@@ -40,6 +40,7 @@ import (
 	"github.com/reaganiwadha/adytus/apps/api/internal/db"
 	"github.com/reaganiwadha/adytus/apps/api/internal/imageprep"
 	"github.com/reaganiwadha/adytus/apps/api/internal/llm"
+	"github.com/reaganiwadha/adytus/apps/api/internal/meter"
 	"github.com/reaganiwadha/adytus/apps/api/internal/session"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
 	"github.com/reaganiwadha/adytus/apps/api/internal/tools"
@@ -56,6 +57,9 @@ type fakeLLM struct {
 	lastTools []string
 	fail      bool
 	noUsage   bool
+	// preamble makes tool-calling replies write a sentence before the call,
+	// as DeepSeek and Claude do.
+	preamble bool
 	// title is what Generate (only used to name chats) answers; empty fails.
 	title string
 }
@@ -98,7 +102,7 @@ func (f *fakeLLM) Stream(_ context.Context, msgs []*schema.Message, opts ...mode
 func (f *fakeLLM) stream(msgs []*schema.Message, opts []model.Option, offered []string) (*schema.StreamReader[*schema.Message], error) {
 	f.mu.Lock()
 	f.lastMsgs, f.lastOpts, f.lastTools = msgs, model.GetCommonOptions(nil, opts...), offered
-	fail, noUsage := f.fail, f.noUsage
+	fail, noUsage, preamble := f.fail, f.noUsage, f.preamble
 	f.mu.Unlock()
 	if fail {
 		return nil, io.ErrUnexpectedEOF
@@ -119,7 +123,11 @@ func (f *fakeLLM) stream(msgs []*schema.Message, opts []model.Option, offered []
 		call := schema.AssistantMessage("", []schema.ToolCall{{Index: &idx, ID: "call_1", Type: "function",
 			Function: schema.FunctionCall{Name: "calculator", Arguments: string(args)}}})
 		call.ReasoningContent = "need the calculator"
-		return schema.StreamReaderFromArray([]*schema.Message{call, usage}), nil
+		chunks := []*schema.Message{call, usage}
+		if preamble {
+			chunks = append([]*schema.Message{schema.AssistantMessage("I'll work that out. ", nil)}, chunks...)
+		}
+		return schema.StreamReaderFromArray(chunks), nil
 	}
 	reply := "echo: " + text(lastMsg)
 	if lastMsg.Role == schema.Tool {
@@ -761,6 +769,99 @@ func TestToolSettingsAndToolLoop(t *testing.T) {
 	e.sendMessage(chatID, "calc 1+1")
 	if len(e.llm.lastTools) != 0 {
 		t.Fatalf("tools offered after opting out: %v", e.llm.lastTools)
+	}
+}
+
+func TestToolCallAfterPreambleRuns(t *testing.T) {
+	e := newEnv(t)
+	e.signup("p@example.com")
+	e.fund()
+	// DeepSeek and Claude write a sentence before the call; that must not be
+	// mistaken for the final answer.
+	e.llm.preamble = true
+
+	chatID := e.must(201, "POST", "/api/chats", map[string]string{"model": "hands"})["chat"].(map[string]any)["id"].(string)
+	status, ev := e.sendMessage(chatID, "calc 6*7")
+	if status != 200 || last(ev).Name != "done" {
+		t.Fatalf("send: %d %v", status, ev)
+	}
+	toolEvents := 0
+	for _, x := range ev {
+		if x.Name == "tool" {
+			toolEvents++
+		}
+	}
+	if toolEvents != 2 {
+		t.Fatalf("tool call after a preamble was dropped: %v", ev)
+	}
+	msg := last(ev).Data["message"].(map[string]any)
+	content, _ := msg["content"].(string)
+	if !strings.Contains(content, "I'll work that out.") || !strings.Contains(content, "answer: 42") {
+		t.Fatalf("reply: %q", content)
+	}
+	if steps := msg["steps"].([]any); len(steps) != 1 || steps[0].(map[string]any)["output"] != "42" {
+		t.Fatalf("steps: %v", steps)
+	}
+}
+
+// noopLedger lets meter.Model run without a database.
+type noopLedger struct{}
+
+func (noopLedger) Reserve(context.Context, uuid.UUID, int64) (uuid.UUID, error) {
+	return uuid.New(), nil
+}
+func (noopLedger) Settle(context.Context, uuid.UUID, uuid.UUID, billing.Usage) error { return nil }
+func (noopLedger) Release(context.Context, uuid.UUID) error                          { return nil }
+
+// TestReplyRunsToolCallAfterPreamble covers the streaming loop directly, so it
+// runs without a database too.
+func TestReplyRunsToolCallAfterPreamble(t *testing.T) {
+	registry, err := tools.NewRegistry(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Deps: Deps{Config: &config.Config{ToolMaxSteps: 4}, Tools: registry}}
+	spec := llm.Model{
+		ID: "hands", Upstream: "up", PromptUSDPerMTok: 1, CompletionUSDPerMTok: 2,
+		ContextTokens: 8000, MaxOutputTokens: 500, Tools: true,
+	}
+	mm := meter.New(&fakeLLM{preamble: true}, noopLedger{}, uuid.Nil, spec)
+	ctx := context.Background()
+	infos, err := registry.ToolInfos(ctx, []string{tools.Calculator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := mm.WithTools(infos)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var steps []tools.Step
+	sr, err := srv.reply(ctx, bound, []*schema.Message{
+		schema.SystemMessage("sys"),
+		schema.UserMessage("calc 6*7"),
+	}, []string{tools.Calculator}, func(st tools.Step) { steps = append(steps, st) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var content strings.Builder
+	for {
+		msg, err := sr.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		content.WriteString(msg.Content)
+	}
+	sr.Close()
+
+	if len(steps) != 2 || steps[1].Output != "42" || !steps[1].Done {
+		t.Fatalf("steps: %+v", steps)
+	}
+	if !strings.Contains(content.String(), "answer: 42") {
+		t.Fatalf("reply: %q", content.String())
 	}
 }
 

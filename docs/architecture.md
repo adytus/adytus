@@ -42,7 +42,7 @@ Sessions as decrypt hosts:
 ## Local dev notes
 
 - **pgsqlite** is a SQLite-backed Postgres wire-protocol proxy. Its README lists no `BYTEA` and no explicit `ON CONFLICT` / `TIMESTAMPTZ` support, which is a poor fit for encrypted blob storage. Prefer a real Postgres (docker compose or a local install) and treat pgsqlite as a fallback; verify before committing to it.
-- **Mockable chat API (decided)**: the backend talks to models through [Eino](https://github.com/cloudwego/eino)'s `ToolCallingChatModel`, using the eino-ext OpenAI adapter for both OpenRouter and Ollama. Eino also brings tool calling and agents (ReAct, graphs), so we don't maintain our own tool-calling stack.
+- **Mockable chat API (decided)**: the backend talks to models through [Eino](https://github.com/cloudwego/eino)'s `ToolCallingChatModel`, using the eino-ext OpenAI adapter for both OpenRouter and Ollama. Eino also brings tool calling and agents (ReAct, graphs), so we don't maintain our own tool-calling stack. The streaming tool loop is the one exception: Eino's ReAct agent stops at the first text chunk, so models that write a sentence before calling a tool (DeepSeek, Claude) silently lose the call. `server.reply` runs the loop instead, streaming that preamble and then the call.
 - **Payments** are crypto only (see below). There is no free or simulated credit: an account has no tokens until a deposit is confirmed.
 
 ## Model calls and billing (implemented)
