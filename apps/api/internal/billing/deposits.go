@@ -61,9 +61,9 @@ type DepositConfig struct {
 	// be credited the quoted amount.
 	ToleranceBps int64
 	Poll         time.Duration
-	// FastWindow is how long after a quote its address is polled every tick;
-	// other addresses are polled every FullScanEvery.
-	FastWindow    time.Duration
+	// Addresses with an open quote are polled every tick until the quote
+	// expires (plus quoteSlack); other addresses are polled every
+	// FullScanEvery.
 	FullScanEvery time.Duration
 	MaxFeedAge    time.Duration
 }
@@ -412,9 +412,13 @@ func (d *Deposits) scanETH(ctx context.Context, safe int64, full bool) error {
 	q := `SELECT user_id, address, eth_accounted_wei::text FROM deposit_addresses WHERE address IS NOT NULL`
 	args := []any{}
 	if !full {
+		// Only follow addresses someone is actually paying: an open quote
+		// stays hot until it expires, then falls back to the slow scan. Using
+		// created_at here would keep every address created in the window hot
+		// for hours after the quote was abandoned.
 		q += ` AND EXISTS (SELECT 1 FROM eth_quotes q WHERE q.user_id = deposit_addresses.user_id
-			AND q.created_at > now() - make_interval(secs => $1))`
-		args = append(args, d.Cfg.FastWindow.Seconds())
+			AND q.status = 'open' AND q.expires_at + make_interval(secs => $1) > now())`
+		args = append(args, quoteSlack.Seconds())
 	}
 	rows, err := d.DB.Query(ctx, q, args...)
 	if err != nil {

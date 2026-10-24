@@ -214,7 +214,7 @@ func newDepositEnv(t *testing.T) *depositEnv {
 		Cfg: DepositConfig{
 			ChainID: 8453, USDC: "0xUSDC", ETHUSDFeed: "0xFEED", Confirmations: 10,
 			QuoteTTL: 15 * time.Minute, MinMicros: 5 * MicrosPerUSD, DustMicros: 100_000,
-			ToleranceBps: 100, Poll: time.Second, FastWindow: time.Hour, FullScanEvery: time.Hour,
+			ToleranceBps: 100, Poll: time.Second, FullScanEvery: time.Hour,
 			MaxFeedAge: time.Hour,
 		},
 	}
