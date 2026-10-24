@@ -44,6 +44,7 @@ type fakeChain struct {
 	mu       sync.Mutex
 	head     int64
 	balances map[string]*big.Int // lower-case address
+	usdc     map[string]*big.Int // USDC balances, lower-case address
 	logs     []base.Log
 	// price is the feed answer (8 decimals) and updated its updatedAt.
 	price   int64
@@ -51,7 +52,7 @@ type fakeChain struct {
 }
 
 func newFakeChain() *fakeChain {
-	return &fakeChain{head: 1000, balances: map[string]*big.Int{}, price: 3_000_00000000, updated: time.Now()}
+	return &fakeChain{head: 1000, balances: map[string]*big.Int{}, usdc: map[string]*big.Int{}, price: 3_000_00000000, updated: time.Now()}
 }
 
 func (f *fakeChain) word(n *big.Int) []byte {
@@ -108,6 +109,18 @@ func (f *fakeChain) serve(t *testing.T) *httptest.Server {
 			}
 			result = out
 		case "eth_call":
+			var call struct {
+				Data string `json:"data"`
+			}
+			_ = json.Unmarshal(req.Params[0], &call)
+			if strings.HasPrefix(call.Data, "0x70a08231") {
+				bal := f.usdc["0x"+strings.ToLower(call.Data[len(call.Data)-40:])]
+				if bal == nil {
+					bal = new(big.Int)
+				}
+				result = "0x" + hex.EncodeToString(f.word(bal))
+				break
+			}
 			var out []byte
 			out = append(out, f.word(big.NewInt(1))...)
 			out = append(out, f.word(big.NewInt(f.price))...)
@@ -341,5 +354,40 @@ func TestQuoteLimits(t *testing.T) {
 	e.chain.mu.Unlock()
 	if _, err := e.d.Quote(context.Background(), e.user, 10*MicrosPerUSD); err == nil {
 		t.Fatal("quote on a stale feed was accepted")
+	}
+}
+
+func TestOverview(t *testing.T) {
+	e := newDepositEnv(t)
+	ctx := context.Background()
+	e.tick(t, 1000)
+	e.chain.usdcTransfer(e.addr, 7_500_000, 995, "0xtx1", 0)
+	e.tick(t, 1010)
+
+	// 7.5 USDC and 0.01 ETH ($30) sit on the address.
+	e.chain.mu.Lock()
+	e.chain.usdc[strings.ToLower(e.addr)] = big.NewInt(7_500_000)
+	e.chain.mu.Unlock()
+	e.chain.setBalance(e.addr, new(big.Int).Div(weiPerETH, big.NewInt(100)))
+
+	o, err := e.d.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Addresses) != 1 {
+		t.Fatalf("addresses = %d", len(o.Addresses))
+	}
+	a := o.Addresses[0]
+	if a.Email != "a@example.com" || a.AccountNumber != a.Index+1 || a.Address != e.addr {
+		t.Fatalf("row = %+v", a)
+	}
+	if a.CreditedMicros != 7_500_000 || a.Deposits != 1 {
+		t.Fatalf("credited = %d in %d", a.CreditedMicros, a.Deposits)
+	}
+	if a.USDCMicros != 7_500_000 || a.ETHUSDMicros != 30*MicrosPerUSD || a.BalanceError != "" {
+		t.Fatalf("on-chain = %+v", a)
+	}
+	if o.Totals.OnChainMicros != 37_500_000 || o.Totals.CreditedMicros != 7_500_000 {
+		t.Fatalf("totals = %+v", o.Totals)
 	}
 }

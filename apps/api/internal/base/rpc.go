@@ -159,3 +159,28 @@ func ParseQuantity(s string) (*big.Int, error) {
 	}
 	return n, nil
 }
+
+// Balance is the ETH balance in wei at the latest block.
+func (c *Client) Balance(ctx context.Context, addr string) (*big.Int, error) {
+	var s string
+	if err := c.call(ctx, "eth_getBalance", &s, addr, "latest"); err != nil {
+		return nil, err
+	}
+	return ParseQuantity(s)
+}
+
+// TokenBalance is an ERC-20 balance (balanceOf) at the latest block.
+func (c *Client) TokenBalance(ctx context.Context, token, owner string) (*big.Int, error) {
+	data, err := hex.DecodeString("70a08231" + strings.Repeat("0", 24) + strings.ToLower(strings.TrimPrefix(owner, "0x")))
+	if err != nil {
+		return nil, fmt.Errorf("bad address %q", owner)
+	}
+	out, err := c.Call(ctx, token, data)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) != 32 {
+		return nil, fmt.Errorf("balanceOf answered %d bytes", len(out))
+	}
+	return new(big.Int).SetBytes(out), nil
+}

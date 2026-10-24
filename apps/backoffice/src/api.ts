@@ -74,9 +74,41 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 	return res.json() as Promise<T>;
 }
 
+export type CryptoAddress = {
+	user_id: string;
+	email: string;
+	index: number;
+	account_number: number;
+	address: string;
+	deposits: number;
+	credited_micros: number;
+	credited_tokens: number;
+	last_deposited_at: string | null;
+	usdc_micros: number;
+	eth_wei: string;
+	eth_usd_micros: number;
+	balance_error?: string;
+};
+export type CryptoOverview = {
+	enabled: boolean;
+	chain_id?: number;
+	usdc?: string;
+	path?: string;
+	eth_usd_micros: number;
+	addresses: CryptoAddress[];
+	totals: {
+		credited_micros: number;
+		usdc_micros: number;
+		eth_wei: string;
+		eth_usd_micros: number;
+		on_chain_micros: number;
+	};
+};
+
 export const api = {
 	state: () => call<State>('GET', ''),
 	users: () => call<{ users: UserUsage[] }>('GET', '/users'),
+	crypto: () => call<CryptoOverview>('GET', '/crypto'),
 	// api_key: undefined keeps the saved key, '' clears it.
 	putProvider: (id: string, base_url: string, api_key?: string) =>
 		call<State>('PUT', `/providers/${id}`, { base_url, api_key }),

@@ -30,6 +30,7 @@ func (s *Server) backofficeRoutes(me fiber.Router) {
 	bo := me.Group("/backoffice", s.requireAdmin)
 	bo.Get("", s.backofficeState)
 	bo.Get("/users", s.backofficeUsers)
+	bo.Get("/crypto", s.backofficeCrypto)
 	bo.Put("/providers/:id", s.putProvider)
 	bo.Post("/providers/:id/test", s.testProvider)
 	bo.Get("/providers/:id/offers", s.providerOffers)
@@ -455,4 +456,17 @@ func (s *Server) putDefaultModel(c fiber.Ctx) error {
 		}
 		return nil
 	})
+}
+
+// backofficeCrypto shows what crypto was received and where it sits. Balances
+// are read from the chain on each call, so it is slow with many addresses.
+func (s *Server) backofficeCrypto(c fiber.Ctx) error {
+	if s.Deposits == nil {
+		return c.JSON(billing.Overview{Addresses: []billing.AddressOverview{}})
+	}
+	o, err := s.Deposits.Overview(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(o)
 }

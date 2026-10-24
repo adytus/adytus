@@ -5,6 +5,7 @@
 	import ProviderCard from './ProviderCard.svelte';
 	import ModelForm from './ModelForm.svelte';
 	import Catalog from './Catalog.svelte';
+	import Payments from './Payments.svelte';
 
 	let st = $state<State | null>(null);
 	let error = $state('');
@@ -15,7 +16,7 @@
 	let editing = $state<AdminModel | null>(null);
 	let browsing = $state(false);
 	let filter = $state('');
-	let tab = $state<'models' | 'users'>('models');
+	let tab = $state<'models' | 'users' | 'payments'>('models');
 	let users = $state<UserUsage[] | null>(null);
 	let usersBusy = $state(false);
 	let usersError = $state('');
@@ -125,6 +126,9 @@
 			</button>
 			<button type="button" aria-current={tab === 'users' ? 'page' : undefined} onclick={() => (tab = 'users')}>
 				Users
+			</button>
+			<button type="button" aria-current={tab === 'payments' ? 'page' : undefined} onclick={() => (tab = 'payments')}>
+				Payments
 			</button>
 		</nav>
 
@@ -244,6 +248,8 @@
 				<p class="muted">No model matches “{filter}”.</p>
 			{/if}
 		</section>
+		{:else if tab === 'payments'}
+		<Payments />
 		{:else}
 		<section aria-labelledby="users-h">
 			<div class="row">
