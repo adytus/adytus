@@ -223,7 +223,6 @@ func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 		LLM: llm.NewRegistry(func(context.Context, llm.Provider) (model.ToolCallingChatModel, error) {
 			return fake, nil
 		}),
-		Payments: billing.MockGateway{},
 		Sessions: session.NewStore(time.Hour, time.Hour),
 		Blobs:    blobs,
 		Tools:    registry,
@@ -372,9 +371,9 @@ func TestChatFlowChargesAndEncrypts(t *testing.T) {
 		t.Fatalf("expected 402 without credit, got %d", status)
 	}
 
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 	if got := e.available(); got != 5_000_000 {
-		t.Fatalf("available after subscribe = %d", got)
+		t.Fatalf("available after funding = %d", got)
 	}
 
 	status, events := e.sendMessage(chatID, "the secret launch code is 0000")
@@ -428,7 +427,7 @@ func TestChatFlowChargesAndEncrypts(t *testing.T) {
 func TestBudgetHoldsAndCaps(t *testing.T) {
 	e := newEnv(t)
 	e.signup("b@example.com")
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 	chatID := e.must(201, "POST", "/api/chats", map[string]string{"model": "pricey"})["chat"].(map[string]any)["id"].(string)
 
 	// Daily cap below one request's hold ($0.05 + prompt).
@@ -481,7 +480,7 @@ func TestBudgetHoldsAndCaps(t *testing.T) {
 func TestReserveIsConcurrencySafe(t *testing.T) {
 	e := newEnv(t)
 	out := e.signup("c@example.com")
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 	userID := mustUUID(t, out["user"].(map[string]any)["id"].(string))
 
 	// $5 of credit, 20 concurrent $1 holds: exactly 5 may succeed.
@@ -508,7 +507,7 @@ func TestReserveIsConcurrencySafe(t *testing.T) {
 func TestAuthAndRecovery(t *testing.T) {
 	e := newEnv(t)
 	code := e.signup("d@example.com")["recovery_code"].(string)
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 	chatID := e.must(201, "POST", "/api/chats", map[string]string{"title": "keep me"})["chat"].(map[string]any)["id"].(string)
 
 	e.must(409, "POST", "/api/auth/signup", map[string]string{"email": "D@example.com", "password": "another long password"})
@@ -572,7 +571,7 @@ func (e *env) upload(name string, data []byte) map[string]any {
 func TestFilesEncryptedAttachedAndOfflineOptIn(t *testing.T) {
 	e := newEnv(t)
 	e.signup("g@example.com")
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 
 	file := e.upload("notes.md", []byte("quarterly numbers: 42"))
 	fileID := file["id"].(string)
@@ -644,7 +643,7 @@ func TestFilesEncryptedAttachedAndOfflineOptIn(t *testing.T) {
 func TestImageAttachmentsNeedVision(t *testing.T) {
 	e := newEnv(t)
 	e.signup("h@example.com")
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 
 	var png bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 2000, 1000))
@@ -698,7 +697,7 @@ func TestImageAttachmentsNeedVision(t *testing.T) {
 func TestToolSettingsAndToolLoop(t *testing.T) {
 	e := newEnv(t)
 	e.signup("t@example.com")
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 
 	st := e.must(200, "GET", "/api/settings", nil)["tools"].([]any)
 	calc := st[0].(map[string]any)
@@ -815,6 +814,15 @@ func TestImageThumbnails(t *testing.T) {
 	}
 }
 
+// fund credits the signed-in user $5, as a confirmed payment would.
+func (e *env) fund() {
+	e.t.Helper()
+	plan := billing.Plan{ID: "test", PriceMicros: 5 * billing.MicrosPerUSD, CreditMicros: 5 * billing.MicrosPerUSD}
+	if err := e.srv.Ledger.Subscribe(context.Background(), e.userID(e.t), plan, "test"); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 func (e *env) userID(t *testing.T) uuid.UUID {
 	return mustUUID(t, e.must(200, "GET", "/api/me", nil)["user"].(map[string]any)["id"].(string))
 }
@@ -831,7 +839,7 @@ func mustUUID(t *testing.T, s string) uuid.UUID {
 func TestAutoTitle(t *testing.T) {
 	e := newEnv(t)
 	e.signup("title@example.com")
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 	if on := e.must(200, "GET", "/api/settings", nil)["auto_title"]; on != true {
 		t.Fatalf("auto_title should default on, got %v", on)
 	}
@@ -849,8 +857,9 @@ func TestAutoTitle(t *testing.T) {
 	if titled != "Launch Codes" || last(ev).Name != "done" {
 		t.Fatalf("title event %q, events %v", titled, ev)
 	}
-	// The reply (1000 + 200) and the title (100 + 20) are both billed.
-	if spent := before - e.available(); spent != 1200+120 {
+	// The reply (1000 + 200) and the title (100 + 20) are both billed, each
+	// rounded up to a whole token.
+	if spent := before - e.available(); spent != billing.RoundMicros(1200)+billing.RoundMicros(120) {
 		t.Fatalf("charged %d", spent)
 	}
 	chat := e.must(200, "GET", "/api/chats/"+chatID, nil)["chat"].(map[string]any)
@@ -925,7 +934,7 @@ func TestPythonFilesInAndOut(t *testing.T) {
 	py := &fakePython{}
 	e := newEnvWith(t, py)
 	e.signup("py@example.com")
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 	chatID := e.must(201, "POST", "/api/chats", map[string]string{"model": "hands"})["chat"].(map[string]any)["id"].(string)
 
 	// A binary file can be attached when python can open it; the model is

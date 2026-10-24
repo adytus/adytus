@@ -14,7 +14,7 @@ Adytus is an OpenWebUI / chatbot hybrid designed for enterprise. Essentially an 
 ### Accounts and billing
 - Simple login for now: email and password.
 - After login, the user is greeted with a subscription model: **$10 buys roughly $5 worth of OpenRouter usage** on the backend side.
-- **Payment is mocked** for now.
+- **Payment is crypto only** (USDC and ETH on Base); there is no free credit.
 
 ### LLM access
 - Backend holds a **single OpenRouter key** for everyone; usage is **limited per user** (token budgeting).

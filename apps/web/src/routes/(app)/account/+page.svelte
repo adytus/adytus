@@ -1,17 +1,10 @@
 <script lang="ts">
-	import { api, ApiError, usd, tokenCount, shortID, type LedgerEntry, type Plan } from '#lib/api.ts';
+	import { api, ApiError, tokenCount, shortID, type LedgerEntry } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
-	import Barcode from '#lib/components/Barcode.svelte';
-	import RouteBadge from '#lib/components/RouteBadge.svelte';
 	import RecoveryStub from '#lib/components/RecoveryStub.svelte';
 	import Alert from '#lib/components/Alert.svelte';
-	import CryptoTopUp from '#lib/components/CryptoTopUp.svelte';
 
-	let plans = $state<Plan[]>([]);
 	let entries = $state<LedgerEntry[]>([]);
-	let buying = $state('');
-	let bought = $state('');
-	let error = $state('');
 
 	let current = $state('');
 	let next = $state('');
@@ -19,29 +12,14 @@
 	let pwError = $state('');
 	let newCode = $state('');
 
+	// Reloads when the balance changes, so a payment shows up in the history.
 	$effect(() => {
-		api.plans().then((r) => (plans = r.plans));
+		void app.balance?.credit_micros;
 		loadLedger();
 	});
 
 	async function loadLedger() {
 		entries = (await api.ledger()).entries;
-	}
-
-	async function subscribe(p: Plan) {
-		error = '';
-		bought = '';
-		buying = p.id;
-		try {
-			const r = await api.subscribe(p.id);
-			app.balance = r.balance;
-			bought = `You subscribed for ${usd(p.price_micros, 0)}. ${tokenCount(p.credit_tokens)} tokens were added (receipt ${r.payment_ref}).`;
-			await loadLedger();
-		} catch (err) {
-			error = err instanceof ApiError ? err.message : 'Payment failed. Try again.';
-		} finally {
-			buying = '';
-		}
 	}
 
 	async function changePassword(e: SubmitEvent) {
@@ -59,7 +37,6 @@
 		}
 	}
 
-	const lines = ['blue', 'purple', 'red', 'yellow'] as const;
 	const b = $derived(app.balance);
 	const usedPct = $derived(b && b.purchased_tokens > 0 ? Math.min(100, (b.used_tokens / b.purchased_tokens) * 100) : 0);
 	const fmtDate = (s: string) =>
@@ -73,7 +50,10 @@
 	</header>
 
 	<section aria-labelledby="usage-h">
-		<h2 id="usage-h">Usage</h2>
+		<div class="head">
+			<h2 id="usage-h">Tokens</h2>
+			<button class="btn primary" type="button" onclick={() => app.openTopUp()}>Add tokens</button>
+		</div>
 		{#if b && b.purchased_tokens > 0}
 			<p class="used"><strong>{tokenCount(b.used_tokens)}</strong> used of {tokenCount(b.purchased_tokens)} tokens</p>
 			<div class="meter" role="img" aria-label="{Math.round(usedPct)}% of your tokens used">
@@ -85,40 +65,11 @@
 				<div><dt>Spent today</dt><dd>{tokenCount(b.spent_today_tokens)} of {tokenCount(b.daily_cap_tokens)} tokens</dd></div>
 			</dl>
 		{:else}
-			<p class="muted">You don't have any tokens yet. Subscribe below to start chatting.</p>
+			<p class="muted">You don't have any tokens yet. Add some to start chatting.</p>
 		{/if}
 	</section>
 
-	<section aria-labelledby="plans-h">
-		<h2 id="plans-h">Add tokens</h2>
-		<p class="muted">
-			Tokens are spent as models reply and don't expire. Payment is simulated in this build, so
-			no card is needed.
-		</p>
-		<div class="plans">
-			{#each plans as p, i (p.id)}
-				<article class="ticket plan">
-					<div class="top">
-						<RouteBadge line={lines[i % lines.length]} size={2.25}>{p.name[0]}</RouteBadge>
-						<span class="micro">Single fare · no expiry</span>
-					</div>
-					<p class="credit">{tokenCount(p.credit_tokens)}</p>
-					<p class="of">tokens for {usd(p.price_micros, 0)}</p>
-					<div class="foot">
-						<Barcode value={p.id.toUpperCase()} height={18} />
-						<button class="btn primary" disabled={buying !== ''} onclick={() => subscribe(p)}>
-							{buying === p.id ? 'Paying…' : `Subscribe for ${usd(p.price_micros, 0)}`}
-						</button>
-					</div>
-				</article>
-			{/each}
-		</div>
-		{#if bought}<Alert tone="ok" title="Payment complete" ondismiss={() => (bought = '')}><p>{bought}</p></Alert>{/if}
-		{#if error}<Alert title="Payment failed" ondismiss={() => (error = '')}><p>{error}</p></Alert>{/if}
-		<p class="muted">The daily spending limit resets at midnight UTC.</p>
-	</section>
-
-	<CryptoTopUp onpaid={loadLedger} />
+	<p class="muted limit">The daily spending limit resets at midnight UTC.</p>
 
 	<section aria-labelledby="ledger-h">
 		<h2 id="ledger-h">Usage and payments</h2>
@@ -142,7 +93,7 @@
 								<td>{fmtDate(e.created_at)}</td>
 								<td>
 									{#if e.reason === 'usage'}{app.model(e.model ?? '')?.name ?? e.model}
-									{:else if e.reason === 'subscription'}Credit purchase
+									{:else if e.reason === 'subscription'}Tokens added
 									{:else}Adjustment{/if}
 								</td>
 								<td class="num">{e.prompt_tokens?.toLocaleString() ?? ''}</td>
@@ -201,6 +152,20 @@
 		letter-spacing: -0.03em;
 		color: var(--headline);
 	}
+	.head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		margin-bottom: 0.5rem;
+	}
+	.head h2 {
+		margin: 0;
+	}
+	.limit {
+		margin: -1.5rem 0 0;
+		font-size: 0.875rem;
+	}
 	h2 {
 		margin: 0 0 0.5rem;
 		font-size: 1.375rem;
@@ -212,34 +177,6 @@
 		margin: 0.25rem 0 1rem;
 		line-height: 1.5;
 		max-width: 62ch;
-	}
-	.plans {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-	.plan {
-		width: min(100%, 20rem);
-		padding: 1rem 1.25rem 0;
-	}
-	.top {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-	}
-	.credit {
-		margin: 0.75rem 0 0;
-		font-size: 3.25rem;
-		font-weight: 900;
-		font-stretch: 65%;
-		letter-spacing: -0.03em;
-		line-height: 0.9;
-	}
-	.of {
-		margin: 0;
-		font-weight: 600;
-		font-size: 0.875rem;
 	}
 	.used {
 		margin: 0 0 0.5rem;
@@ -279,15 +216,6 @@
 		margin: 0.125rem 0 0;
 		font-weight: 700;
 		font-variant-numeric: tabular-nums;
-	}
-	.foot {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.75rem;
-		margin-top: 1rem;
-		padding: 0.75rem 0;
-		border-top: 2px dashed rgb(0 0 0 / 0.35);
 	}
 	.table-wrap {
 		overflow-x: auto;

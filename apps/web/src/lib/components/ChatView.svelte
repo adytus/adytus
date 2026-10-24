@@ -428,7 +428,7 @@
 				<Alert title={errorTitles[err.code] ?? 'Something went wrong'} ondismiss={() => (sendError = null)}>
 					<p>{err.message}</p>
 					{#snippet action()}
-						{#if err.code === 'budget_exceeded'}<a class="btn" href="/account">Add credit</a>{/if}
+						{#if err.code === 'budget_exceeded'}<button class="btn" type="button" onclick={() => app.openTopUp()}>Add tokens</button>{/if}
 					{/snippet}
 				</Alert>
 			{/if}

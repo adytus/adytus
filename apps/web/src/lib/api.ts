@@ -1,5 +1,4 @@
 export type User = { id: string; email: string; created_at: string };
-export type Plan = { id: string; name: string; price_micros: number; credit_tokens: number };
 export type Model = {
 	id: string;
 	name: string;
@@ -168,7 +167,6 @@ const get = <T>(p: string) => call<T>('GET', p);
 
 export const api = {
 	models: () => get<{ models: Model[]; default: string }>('/api/models'),
-	plans: () => get<{ plans: Plan[] }>('/api/plans'),
 
 	// privileges lists what the user may open beyond their own data, e.g.
 	// 'backoffice'. The API enforces each one; this only decides what to show.
@@ -192,8 +190,6 @@ export const api = {
 
 	balance: () => get<{ balance: Balance }>('/api/billing/balance'),
 	ledger: () => get<{ entries: LedgerEntry[] }>('/api/billing/ledger'),
-	subscribe: (plan_id: string) =>
-		call<{ balance: Balance; payment_ref: string }>('POST', '/api/billing/subscribe', { plan_id }),
 
 	cryptoInfo: () => get<CryptoInfo>('/api/billing/crypto'),
 	cryptoQuote: (usd_micros: number) =>

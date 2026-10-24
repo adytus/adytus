@@ -69,7 +69,6 @@ func run() error {
 		Store:    &store.Store{DB: pool},
 		Ledger:   ledger,
 		LLM:      llm.NewRegistry(llm.DialOpenAI),
-		Payments: billing.MockGateway{},
 		Deposits: deposits,
 		Sessions: sessions,
 		Blobs:    blobs,

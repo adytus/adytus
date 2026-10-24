@@ -15,6 +15,8 @@ class AppState {
 	chats = $state<Chat[]>([]);
 	models = $state<Model[]>([]);
 	defaultModel = $state('');
+	// Whether the Add tokens dialog is open.
+	topUp = $state(false);
 
 	can(privilege: string) {
 		return this.privileges.includes(privilege);
@@ -39,6 +41,14 @@ class AppState {
 		this.defaultModel = models.default;
 	}
 
+	openTopUp() {
+		this.topUp = true;
+	}
+
+	closeTopUp() {
+		this.topUp = false;
+	}
+
 	async refreshBalance() {
 		this.balance = (await api.balance()).balance;
 	}
@@ -57,6 +67,7 @@ class AppState {
 		this.privileges = [];
 		this.balance = null;
 		this.chats = [];
+		this.topUp = false;
 	}
 }
 

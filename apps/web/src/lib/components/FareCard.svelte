@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tokenCount, type Balance } from '../api.ts';
+	import { app } from '../state.svelte.ts';
 
 	// A slim fare card: what's left, and how much of what was bought is used.
 	let { balance }: { balance: Balance | null } = $props();
@@ -9,7 +10,8 @@
 	);
 </script>
 
-<a class="fare ticket" href="/account" aria-label="Balance: {balance ? tokenCount(balance.available_tokens) : 'loading'} tokens left. Open account">
+<div class="fare ticket">
+<a class="info" href="/account" aria-label="Balance: {balance ? tokenCount(balance.available_tokens) : 'loading'} tokens left. Open account">
 	<div class="row">
 		<span class="left">{balance ? tokenCount(balance.available_tokens) : '—'}</span>
 		<span class="label">tokens left</span>
@@ -24,17 +26,24 @@
 		<p class="sub">No tokens yet. Add some to start chatting.</p>
 	{/if}
 </a>
+<button class="btn add" type="button" onclick={() => app.openTopUp()}>Add tokens</button>
+</div>
 
 <style>
 	.fare {
 		display: grid;
-		gap: 0.375rem;
+		gap: 0.625rem;
 		padding: 0.625rem 0.75rem;
-		text-decoration: none;
 		border-left: 6px solid var(--line-yellow);
 	}
-	.fare:hover {
-		background: #dcd8cf;
+	.info {
+		display: grid;
+		gap: 0.375rem;
+		text-decoration: none;
+		color: inherit;
+	}
+	.add {
+		width: 100%;
 	}
 	.row {
 		display: flex;

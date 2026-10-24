@@ -26,8 +26,7 @@ type Deps struct {
 	Store  *store.Store
 	Ledger *billing.Ledger
 	// LLM is the live model catalog and providers; see SeedLLM and ReloadLLM.
-	LLM      *llm.Registry
-	Payments billing.Gateway
+	LLM *llm.Registry
 	// Deposits takes USDC and ETH on Base; nil when crypto is not configured.
 	Deposits *billing.Deposits
 	Sessions *session.Store
@@ -79,7 +78,6 @@ func (s *Server) routes() {
 
 	api := s.App.Group("/api")
 	api.Get("/models", s.listModels)
-	api.Get("/plans", s.listPlans)
 
 	auth := api.Group("/auth", limiter.New(limiter.Config{
 		Max:        s.Config.AuthPerMinute,
@@ -99,7 +97,6 @@ func (s *Server) routes() {
 
 	me.Get("/billing/balance", s.balance)
 	me.Get("/billing/ledger", s.ledgerHistory)
-	me.Post("/billing/subscribe", s.subscribe)
 	me.Get("/billing/crypto", s.cryptoInfo)
 	me.Post("/billing/crypto/quote", s.cryptoQuote)
 
@@ -222,8 +219,4 @@ func withoutModelPrices(models []llm.Model) []map[string]any {
 		out = append(out, view)
 	}
 	return out
-}
-
-func (s *Server) listPlans(c fiber.Ctx) error {
-	return c.JSON(fiber.Map{"plans": billing.Plans})
 }

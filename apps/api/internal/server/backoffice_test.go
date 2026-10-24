@@ -141,7 +141,7 @@ func TestBackofficeUserUsage(t *testing.T) {
 	e := newEnv(t)
 	e.signup("admin@example.com")
 	e.makeAdmin("admin@example.com")
-	e.must(200, "POST", "/api/billing/subscribe", map[string]string{"plan_id": "standard"})
+	e.fund()
 
 	chatID := e.must(201, "POST", "/api/chats", map[string]string{"model": "cheap"})["chat"].(map[string]any)["id"].(string)
 	if status, ev := e.sendMessage(chatID, "hi"); status != 200 || last(ev).Name != "done" {

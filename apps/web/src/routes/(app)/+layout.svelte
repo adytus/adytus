@@ -7,6 +7,7 @@
 	import FareCard from '#lib/components/FareCard.svelte';
 	import ModelIcon from '#lib/components/ModelIcon.svelte';
 	import Alert from '#lib/components/Alert.svelte';
+	import TopUpDialog from '#lib/components/TopUpDialog.svelte';
 	import type { LayoutProps } from './$types';
 	import { differenceInCalendarDays, format, isThisYear, isToday, isYesterday } from 'date-fns';
 	import type { Chat } from '#lib/api.ts';
@@ -26,10 +27,13 @@
 		);
 	});
 
-	// Nothing works without a subscription: send unpaid accounts to subscribe.
+	// Nothing works without tokens: offer to add some once, when an unpaid
+	// account first arrives.
+	let offered = false;
 	$effect(() => {
-		if (ready && app.balance && app.balance.purchased_micros === 0 && !page.url.pathname.startsWith('/account')) {
-			goto('/account');
+		if (ready && !offered && app.balance && app.balance.purchased_micros === 0) {
+			offered = true;
+			app.openTopUp();
 		}
 	});
 
@@ -149,6 +153,7 @@
 			{@render children()}
 		</main>
 	</div>
+	<TopUpDialog />
 {/if}
 
 <style>

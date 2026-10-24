@@ -1,6 +1,4 @@
 <script lang="ts">
-	import Barcode from './Barcode.svelte';
-
 	// Shows a freshly issued recovery code as a tear-off ticket stub. The code
 	// is the only way back into encrypted data after a lost password.
 	let { code, onclose }: { code: string; onclose: () => void } = $props();
@@ -31,7 +29,6 @@
 		</label>
 	</div>
 	<div class="tear">
-		<Barcode value={code.slice(0, 9)} height={22} />
 		<button class="btn primary" type="button" disabled={!kept} onclick={onclose}>Continue</button>
 	</div>
 </div>
