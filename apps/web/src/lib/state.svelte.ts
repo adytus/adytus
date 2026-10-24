@@ -17,6 +17,9 @@ class AppState {
 	defaultModel = $state('');
 	// Whether the Add tokens dialog is open.
 	topUp = $state(false);
+	// Bumped by New chat, so a click while already on a new chat starts over
+	// instead of keeping its draft and attachments.
+	newChat = $state(0);
 
 	can(privilege: string) {
 		return this.privileges.includes(privilege);

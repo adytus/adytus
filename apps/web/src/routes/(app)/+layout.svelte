@@ -101,15 +101,15 @@
 {:else}
 	<div class="shell">
 		<header class="topbar">
-			<a class="wordmark" href="/chat"><Wordmark size={1.5} /></a>
+			<a class="wordmark" href="/chat" onclick={() => app.newChat++}><Wordmark size={1.5} /></a>
 			<button class="btn" aria-expanded={railOpen} aria-controls="rail" onclick={() => (railOpen = !railOpen)}>
 				{railOpen ? 'Close' : 'Menu'}
 			</button>
 		</header>
 
 		<nav id="rail" class="rail" class:open={railOpen} aria-label="Main">
-			<a class="wordmark desktop" href="/chat"><Wordmark size={2} /></a>
-			<a class="btn primary new" href="/chat">New chat</a>
+			<a class="wordmark desktop" href="/chat" onclick={() => app.newChat++}><Wordmark size={2} /></a>
+			<a class="btn primary new" href="/chat" onclick={() => app.newChat++}>New chat</a>
 
 			<h2 class="sr-only">Chats</h2>
 			<div class="chats">

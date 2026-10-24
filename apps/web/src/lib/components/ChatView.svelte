@@ -32,7 +32,11 @@
 	let attached = $state<Attachment[]>([]);
 	let pickerOpen = $state(false);
 	let pickable = $state<FileItem[]>([]);
-	let uploading = $state(false);
+	// Files on their way up, shown as chips until they're attached.
+	let pending = $state<{ key: number; name: string }[]>([]);
+	const uploading = $derived(pending.length > 0);
+	// Drag events fire per child element, so entries are counted.
+	let dragDepth = $state(0);
 	let gallery = $state<{ images: GalleryImage[]; index: number } | null>(null);
 	let noThumb = $state<Record<string, boolean>>({});
 	// Any file can be attached when a tool that opens files is on.
@@ -86,7 +90,7 @@
 	async function submit(e?: SubmitEvent) {
 		e?.preventDefault();
 		const content = draft.trim();
-		if (!content || streaming) return;
+		if (!content || streaming || uploading) return;
 		const files = attached;
 		if (!chatID) {
 			try {
@@ -250,33 +254,84 @@
 	const canAttach = (f: FileItem) => f.text || (f.image && !!model?.vision) || python;
 
 	function attach(f: FileItem) {
-		if (attached.length >= 5 || attached.some((a) => a.id === f.id)) return;
+		if (attached.length >= maxAttached || attached.some((a) => a.id === f.id)) return;
 		attached = [...attached, { id: f.id, name: f.name, image: f.image }];
 		pickerOpen = false;
 		input?.focus();
 	}
 
-	async function uploadAndAttach(e: Event) {
-		const el = e.currentTarget as HTMLInputElement;
-		const file = el.files?.[0];
-		el.value = '';
-		if (!file) return;
-		uploading = true;
-		try {
-			const { file: up } = await api.upload(file);
-			if (!canAttach(up)) {
-				const why = up.image
-					? `${model?.name ?? 'This model'} can't see images; switch to a vision model or turn on the Python tool to attach it.`
-					: 'only text files and images can be attached to a message, or any file when the Python tool is on.';
-				sendError = { code: 'validation', message: `${up.name} was saved to Files, but ${why}` };
-			} else {
-				attach(up);
-			}
-		} catch (err) {
-			sendError = { code: 'error', message: err instanceof ApiError ? err.message : 'Upload failed.' };
-		} finally {
-			uploading = false;
+	const maxAttached = 5;
+	let uploadKey = 0;
+
+	// uploadFiles uploads files side by side and attaches each as it lands,
+	// up to the message's limit.
+	async function uploadFiles(files: File[]) {
+		if (!files.length) return;
+		const room = maxAttached - attached.length - pending.length;
+		if (files.length > room) {
+			sendError = {
+				code: 'validation',
+				message:
+					room > 0
+						? `Only ${room} more file${room === 1 ? '' : 's'} can go on this message (up to ${maxAttached}); the rest weren't uploaded.`
+						: `A message can carry up to ${maxAttached} files.`
+			};
 		}
+		pickerOpen = false;
+		await Promise.all(
+			files.slice(0, Math.max(0, room)).map(async (file) => {
+				const key = ++uploadKey;
+				pending = [...pending, { key, name: file.name }];
+				try {
+					const { file: up } = await api.upload(file);
+					if (!canAttach(up)) {
+						const why = up.image
+							? `${model?.name ?? 'This model'} can't see images; switch to a vision model or turn on the document reader or Python tool to attach it.`
+							: 'only text files and images can be attached to a message, or any file when the document reader or Python tool is on.';
+						sendError = { code: 'validation', message: `${up.name} was saved to Files, but ${why}` };
+					} else {
+						attach(up);
+					}
+				} catch (err) {
+					sendError = {
+						code: 'error',
+						message: `${file.name}: ${err instanceof ApiError ? err.message : 'the upload failed.'}`
+					};
+				} finally {
+					pending = pending.filter((p) => p.key !== key);
+				}
+			})
+		);
+	}
+
+	function uploadPicked(e: Event) {
+		const el = e.currentTarget as HTMLInputElement;
+		const files = [...(el.files ?? [])];
+		el.value = '';
+		uploadFiles(files);
+	}
+
+	const carriesFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+	function dragEnter(e: DragEvent) {
+		if (!carriesFiles(e)) return;
+		e.preventDefault();
+		dragDepth++;
+	}
+	function dragOver(e: DragEvent) {
+		if (!carriesFiles(e)) return;
+		e.preventDefault();
+		e.dataTransfer!.dropEffect = loadError ? 'none' : 'copy';
+	}
+	function dragLeave(e: DragEvent) {
+		if (carriesFiles(e)) dragDepth = Math.max(0, dragDepth - 1);
+	}
+	function drop(e: DragEvent) {
+		if (!carriesFiles(e)) return;
+		e.preventDefault();
+		dragDepth = 0;
+		if (loadError) return;
+		uploadFiles([...(e.dataTransfer?.files ?? [])]);
+		input?.focus();
 	}
 
 	const perMTok = (n: number) => (n < 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(n % 1 ? 2 : 0)}`);
@@ -305,7 +360,20 @@
 	}
 </script>
 
-<section class="chat">
+<section
+	class="chat"
+	ondragenter={dragEnter}
+	ondragover={dragOver}
+	ondragleave={dragLeave}
+	ondrop={drop}
+	aria-label="Chat"
+>
+	{#if dragDepth > 0 && !loadError}
+		<div class="dropzone" aria-hidden="true">
+			<p>Drop files to attach them</p>
+			<p class="muted">Up to {maxAttached} per message, encrypted before they're stored.</p>
+		</div>
+	{/if}
 	<header class="bar">
 		{#if chat}
 			<input
@@ -440,7 +508,7 @@
 
 	<form class="composer" onsubmit={submit}>
 		<div class="column">
-			{#if attached.length}
+			{#if attached.length || pending.length}
 				<ul class="chips">
 					{#each attached as a (a.id)}
 						{#if a.image && !noThumb[a.id]}
@@ -457,13 +525,23 @@
 							</li>
 						{/if}
 					{/each}
+					{#each pending as p (p.key)}
+						<li class="up" aria-live="polite">Uploading {p.name}…</li>
+					{/each}
 				</ul>
+				<p class="sealed">
+					<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+						<rect x="4" y="10.5" width="16" height="10.5" rx="2" fill="currentColor" />
+						<path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" />
+					</svg>
+					Uploaded files are encrypted before they're stored.
+				</p>
 			{/if}
 			{#if pickerOpen}
 				<div class="picker">
 					<label class="btn upload">
-						{uploading ? 'Uploading…' : 'Upload a file'}
-						<input type="file" class="sr-only" onchange={uploadAndAttach} disabled={uploading} />
+						Upload files
+						<input type="file" class="sr-only" multiple onchange={uploadPicked} />
 					</label>
 					{#each pickable as f (f.id)}
 						<button type="button" class="pick" onclick={() => attach(f)}>
@@ -471,7 +549,7 @@
 							<span class="pick-name" class:img={f.image && !f.thumb}>{f.name}</span><span class="muted">{bytes(f.size)}</span>
 						</button>
 					{:else}
-						<p class="muted">{python ? 'No files yet.' : model?.vision ? 'No text files or images yet.' : 'No text files yet.'} Upload one to attach it.</p>
+						<p class="muted">{python ? 'No files yet.' : model?.vision ? 'No text files or images yet.' : 'No text files yet.'} Upload one, or drop it here, to attach it.</p>
 					{/each}
 				</div>
 			{/if}
@@ -481,9 +559,9 @@
 					class="clip"
 					aria-expanded={pickerOpen}
 					aria-label="Attach files"
-					title={attached.length >= 5 ? 'Up to 5 files per message' : 'Attach files'}
+					title={attached.length + pending.length >= maxAttached ? `Up to ${maxAttached} files per message` : 'Attach files, or drop them here'}
 					onclick={openPicker}
-					disabled={attached.length >= 5}
+					disabled={attached.length + pending.length >= maxAttached}
 				>
 					<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
 						<path
@@ -507,7 +585,7 @@
 				{#if streaming}
 					<button type="button" class="btn" onclick={stop}>Stop</button>
 				{:else}
-					<button class="btn primary" disabled={!draft.trim()}>Send</button>
+					<button class="btn primary" disabled={!draft.trim() || uploading} title={uploading ? 'Waiting for uploads to finish' : undefined}>Send</button>
 				{/if}
 			</div>
 			{#if model && app.can('backoffice')}
@@ -523,9 +601,34 @@
 
 <style>
 	.chat {
+		position: relative;
 		display: grid;
 		grid-template-rows: auto minmax(0, 1fr) auto;
 		height: 100%;
+	}
+	.dropzone {
+		position: absolute;
+		inset: 0.75rem;
+		z-index: 5;
+		display: grid;
+		place-content: center;
+		gap: 0.25rem;
+		text-align: center;
+		border: 2px dashed var(--stock);
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--black) 85%, transparent);
+		pointer-events: none;
+	}
+	.dropzone p {
+		margin: 0;
+		font-weight: 800;
+		font-size: 1.25rem;
+		color: var(--headline);
+	}
+	.dropzone .muted {
+		font-weight: 400;
+		font-size: 0.875rem;
+		color: var(--muted);
 	}
 	.bar {
 		display: flex;
@@ -764,6 +867,19 @@
 	}
 	.clip:hover:not(:disabled) {
 		color: var(--paper);
+	}
+	.sealed {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		margin: 0;
+		font-size: 0.75rem;
+		color: var(--muted);
+	}
+	.chips li.up {
+		background: var(--surface-2);
+		color: var(--muted);
+		padding-right: 0.625rem;
 	}
 	.hint {
 		margin: 0;
