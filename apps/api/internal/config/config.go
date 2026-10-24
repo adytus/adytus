@@ -58,6 +58,24 @@ type Config struct {
 	PythonParallel int           `env:"PYTHON_PARALLEL" envDefault:"2"`
 	ToolMaxSteps   int           `env:"TOOL_MAX_STEPS" envDefault:"8"`
 
+	// Crypto payments on Base. Off unless BASE_XPUB is set. The xpub is a
+	// public key: deposit addresses are derived from it, and funds are swept
+	// with keys that never touch this server. BASE_USDC and BASE_ETH_USD_FEED
+	// default to mainnet; BASE_CHAIN_ID=84532 selects Base Sepolia, whose
+	// addresses must then be set (see .env.example).
+	BaseRPCURL        string        `env:"BASE_RPC_URL"`
+	BaseXPub          string        `env:"BASE_XPUB"`
+	BaseChainID       int64         `env:"BASE_CHAIN_ID" envDefault:"8453"`
+	BaseUSDC          string        `env:"BASE_USDC" envDefault:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"`
+	BaseETHUSDFeed    string        `env:"BASE_ETH_USD_FEED" envDefault:"0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70"`
+	CryptoConfirms    int64         `env:"CRYPTO_CONFIRMATIONS" envDefault:"12"`
+	CryptoQuoteTTL    time.Duration `env:"CRYPTO_QUOTE_TTL" envDefault:"15m"`
+	CryptoMinMicros   int64         `env:"CRYPTO_MIN_MICROS" envDefault:"5000000"`
+	CryptoDustMicros  int64         `env:"CRYPTO_DUST_MICROS" envDefault:"100000"`
+	CryptoToleranceBP int64         `env:"CRYPTO_ETH_TOLERANCE_BPS" envDefault:"100"`
+	CryptoPoll        time.Duration `env:"CRYPTO_POLL" envDefault:"6s"`
+	CryptoFullScan    time.Duration `env:"CRYPTO_FULL_SCAN" envDefault:"5m"`
+
 	// BackofficeDir holds the built backoffice UI (apps/backoffice/dist),
 	// served to admins only.
 	BackofficeDir string `env:"BACKOFFICE_DIR" envDefault:"../backoffice/dist"`
@@ -78,6 +96,14 @@ func Load() (*Config, error) {
 	c.ServerKey = key
 	if c.LLMProvider != "openrouter" && c.LLMProvider != "ollama" {
 		return nil, fmt.Errorf("LLM_PROVIDER must be openrouter or ollama, got %q", c.LLMProvider)
+	}
+	if c.BaseXPub != "" {
+		if c.BaseRPCURL == "" {
+			return nil, fmt.Errorf("BASE_RPC_URL is required when BASE_XPUB is set")
+		}
+		if c.CryptoConfirms < 1 || c.CryptoToleranceBP < 0 || c.CryptoToleranceBP >= 10_000 {
+			return nil, fmt.Errorf("CRYPTO_CONFIRMATIONS must be at least 1 and CRYPTO_ETH_TOLERANCE_BPS in [0, 10000)")
+		}
 	}
 	c.KDF = crypto.DefaultKDF
 	return &c, nil

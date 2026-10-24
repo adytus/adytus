@@ -51,3 +51,31 @@ func (s *Server) subscribe(c fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{"balance": b, "payment_ref": ref})
 }
+
+func (s *Server) cryptoInfo(c fiber.Ctx) error {
+	if s.Deposits == nil {
+		return c.JSON(billing.DepositInfo{Deposits: []billing.DepositEntry{}})
+	}
+	info, err := s.Deposits.Info(c.Context(), mustAuth(c).UserID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(info)
+}
+
+func (s *Server) cryptoQuote(c fiber.Ctx) error {
+	if s.Deposits == nil {
+		return errs.NotFound.New("crypto payments are not enabled")
+	}
+	var req struct {
+		USDMicros int64 `json:"usd_micros" validate:"required,gt=0"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	q, err := s.Deposits.Quote(c.Context(), mustAuth(c).UserID, req.USDMicros)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"quote": q})
+}

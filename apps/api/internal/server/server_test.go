@@ -983,3 +983,13 @@ func TestPythonFilesInAndOut(t *testing.T) {
 }
 
 func lastLine(s string) string { return s[strings.LastIndex(s, "\n")+1:] }
+
+func TestCryptoDisabledByDefault(t *testing.T) {
+	e := newEnv(t)
+	e.signup("crypto@example.com")
+	out := e.must(200, "GET", "/api/billing/crypto", nil)
+	if out["enabled"] != false {
+		t.Fatalf("enabled = %v", out["enabled"])
+	}
+	e.must(404, "POST", "/api/billing/crypto/quote", map[string]any{"usd_micros": 10_000_000})
+}

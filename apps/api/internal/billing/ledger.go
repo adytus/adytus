@@ -158,19 +158,25 @@ func (l *Ledger) Release(ctx context.Context, holdID uuid.UUID) error {
 // Subscribe records a paid plan and credits the user.
 func (l *Ledger) Subscribe(ctx context.Context, userID uuid.UUID, plan Plan, paymentRef string) error {
 	return pgx.BeginFunc(ctx, l.DB, func(tx pgx.Tx) error {
-		var subID uuid.UUID
-		err := tx.QueryRow(ctx, `
-			INSERT INTO subscriptions (user_id, plan, paid_micros, credit_micros, payment_ref)
-			VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-			userID, plan.ID, plan.PriceMicros, plan.CreditMicros, paymentRef).Scan(&subID)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO credit_ledger (user_id, delta_micros, reason, subscription_id)
-			VALUES ($1, $2, 'subscription', $3)`, userID, plan.CreditMicros, subID)
-		return err
+		return l.SubscribeTx(ctx, tx, userID, plan, paymentRef)
 	})
+}
+
+// SubscribeTx is Subscribe inside the caller's transaction, so a payment can
+// be marked as handled and credited atomically.
+func (l *Ledger) SubscribeTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, plan Plan, paymentRef string) error {
+	var subID uuid.UUID
+	err := tx.QueryRow(ctx, `
+		INSERT INTO subscriptions (user_id, plan, paid_micros, credit_micros, payment_ref)
+		VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		userID, plan.ID, plan.PriceMicros, plan.CreditMicros, paymentRef).Scan(&subID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO credit_ledger (user_id, delta_micros, reason, subscription_id)
+		VALUES ($1, $2, 'subscription', $3)`, userID, plan.CreditMicros, subID)
+	return err
 }
 
 func (l *Ledger) History(ctx context.Context, userID uuid.UUID, limit int) ([]Entry, error) {

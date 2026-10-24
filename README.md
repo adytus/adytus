@@ -2,7 +2,7 @@
 
 Private, encrypted chatbot for enterprise. An OpenWebUI / chatbot hybrid that wraps OpenRouter, where only the user can read their stored data (not even admins).
 
-> Status: working prototype. Accounts with encrypted chats and files, streamed chat with per-call credit metering, image input on vision models, and mocked payments.
+> Status: working prototype. Accounts with encrypted chats and files, streamed chat with per-call credit metering, image input on vision models, mocked card payments, and USDC/ETH payments on Base.
 
 ## Docs
 

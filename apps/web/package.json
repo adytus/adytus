@@ -28,6 +28,7 @@
 	"type": "module",
 	"dependencies": {
 		"date-fns": "^4.4.0",
+		"qrcode-generator": "^2.0.4",
 		"svelte-streamdown": "^4.2.1"
 	}
 }

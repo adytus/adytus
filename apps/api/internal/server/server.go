@@ -28,6 +28,8 @@ type Deps struct {
 	// LLM is the live model catalog and providers; see SeedLLM and ReloadLLM.
 	LLM      *llm.Registry
 	Payments billing.Gateway
+	// Deposits takes USDC and ETH on Base; nil when crypto is not configured.
+	Deposits *billing.Deposits
 	Sessions *session.Store
 	Blobs    blob.Store
 	Tools    *tools.Registry
@@ -98,6 +100,8 @@ func (s *Server) routes() {
 	me.Get("/billing/balance", s.balance)
 	me.Get("/billing/ledger", s.ledgerHistory)
 	me.Post("/billing/subscribe", s.subscribe)
+	me.Get("/billing/crypto", s.cryptoInfo)
+	me.Post("/billing/crypto/quote", s.cryptoQuote)
 
 	me.Get("/chats", s.listChats)
 	me.Post("/chats", s.createChat)

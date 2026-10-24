@@ -13,6 +13,36 @@ export type Model = {
 	icon: ModelIcon;
 };
 export type ModelIcon = { code: string; color: string; shape: 'circle' | 'square' | 'diamond' | 'hexagon' };
+export type CryptoQuote = {
+	id: string;
+	usd_micros: number;
+	usd_tokens: number;
+	amount_wei: string;
+	rate_micros: number;
+	expires_at: string;
+	address: string;
+};
+export type CryptoDeposit = {
+	id: string;
+	asset: 'usdc' | 'eth';
+	amount_atomic: string;
+	credit_micros: number;
+	credit_tokens: number;
+	status: 'credited' | 'ignored';
+	tx_hash: string | null;
+	created_at: string;
+};
+export type CryptoInfo = {
+	enabled: boolean;
+	chain_id?: number;
+	address?: string;
+	usdc?: string;
+	confirmations?: number;
+	min_micros?: number;
+	min_tokens?: number;
+	quote: CryptoQuote | null;
+	deposits: CryptoDeposit[];
+};
 export type Balance = {
 	credit_micros: number;
 	held_micros: number;
@@ -164,6 +194,10 @@ export const api = {
 	ledger: () => get<{ entries: LedgerEntry[] }>('/api/billing/ledger'),
 	subscribe: (plan_id: string) =>
 		call<{ balance: Balance; payment_ref: string }>('POST', '/api/billing/subscribe', { plan_id }),
+
+	cryptoInfo: () => get<CryptoInfo>('/api/billing/crypto'),
+	cryptoQuote: (usd_micros: number) =>
+		call<{ quote: CryptoQuote }>('POST', '/api/billing/crypto/quote', { usd_micros }),
 
 	chats: () => get<{ chats: Chat[] }>('/api/chats'),
 	createChat: (model?: string) => call<{ chat: Chat }>('POST', '/api/chats', { model }),

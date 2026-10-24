@@ -43,7 +43,7 @@ Sessions as decrypt hosts:
 
 - **pgsqlite** is a SQLite-backed Postgres wire-protocol proxy. Its README lists no `BYTEA` and no explicit `ON CONFLICT` / `TIMESTAMPTZ` support, which is a poor fit for encrypted blob storage. Prefer a real Postgres (docker compose or a local install) and treat pgsqlite as a fallback; verify before committing to it.
 - **Mockable chat API (decided)**: the backend talks to models through [Eino](https://github.com/cloudwego/eino)'s `ToolCallingChatModel`, using the eino-ext OpenAI adapter for both OpenRouter and Ollama. Eino also brings tool calling and agents (ReAct, graphs), so we don't maintain our own tool-calling stack.
-- **Payments** are mocked behind an interface as well.
+- **Card payments** are mocked behind an interface; crypto payments are real (see below).
 
 ## Model calls and billing (implemented)
 
@@ -54,3 +54,14 @@ Sessions as decrypt hosts:
 - **Recovery code (product decision).** Signup and password change issue a recovery code that also wraps the MK; it's the only way back in after a lost password.
 - **Sessions are in memory**, so restarting the API signs everyone out. Fine for one instance; several instances would need a shared session store.
 - **Backoffice.** `users.is_admin` opens server-wide settings: the model catalog (`llm_models`) and provider URLs and keys (`llm_providers`, keys sealed with `SERVER_KEY`). The live catalog and provider clients sit in an `llm.Registry` snapshot; each change is validated in its transaction (at least one enabled model, every used provider configured) and swapped in after commit. A reply keeps the snapshot it started with. Like sessions, the snapshot is per instance: several instances would need to reload on change.
+
+## Crypto payments on Base (implemented)
+
+Off unless `BASE_XPUB` is set. Users pay USDC or ETH on Base; both credit the same ledger as a `subscription` row.
+
+- **Non-custodial.** Each user gets one deposit address, derived from the operator's extended public key at a per-user child index (`deposit_addresses.idx`). The server holds no private key, and an `xprv` in `BASE_XPUB` is refused. Funds are swept with keys kept offline. Attribution is by address, so there is no memo or exact amount to get wrong, and top-ups can be any amount over `CRYPTO_MIN_MICROS`.
+- **USDC.** 1 USDC base unit is exactly 1 micro-USD, so the transferred amount is the credit. The watcher scans USDC `Transfer` logs to deposit addresses behind a cursor (`chain_cursors`) that trails the head by `CRYPTO_CONFIRMATIONS`. `(tx_hash, log_index)` is unique, so a transfer credits once.
+- **ETH.** Detected by reading the address balance at the confirmed block and crediting the rise over `eth_accounted_wei`, not by scanning transactions, which would miss smart-contract wallets (Coinbase Smart Wallet is common on Base). A fall is a sweep and moves the mark down. Addresses with a quote from the last 24h are polled every tick; the rest every `CRYPTO_FULL_SCAN`. Sweeping an address in the same window as a deposit can hide that deposit, so sweep addresses with no open quote.
+- **ETH pricing.** The Chainlink ETH/USD feed is read on-chain (`BASE_ETH_USD_FEED`); a round older than an hour is refused. A quote locks the rate for `CRYPTO_QUOTE_TTL`. A payment seen before the quote expires (plus a minute) is credited at the locked rate, and up to `CRYPTO_ETH_TOLERANCE_BPS` under the quoted amount still gets the full quoted USD. Later payments get the live rate. Payments under `CRYPTO_DUST_MICROS` aren't credited (USDC is recorded as `ignored`; ETH keeps accumulating).
+- **Limits.** The USDC scan filters on all deposit addresses in batches of 100, and the ETH full scan makes one RPC call per address; both are fine for a prototype and would want batching or an indexer at scale. The cursor is per database, but the watcher is idempotent, so two instances only duplicate work.
+- **Testing.** `internal/billing/deposits_test.go` runs the watcher against a scripted JSON-RPC node and a real Postgres (`TEST_DATABASE_URL`). For a live check use Base Sepolia (`BASE_CHAIN_ID=84532`, see `.env.example`).

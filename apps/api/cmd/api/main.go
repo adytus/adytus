@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/reaganiwadha/adytus/apps/api/internal/base"
 	"github.com/reaganiwadha/adytus/apps/api/internal/billing"
 	"github.com/reaganiwadha/adytus/apps/api/internal/blob"
 	"github.com/reaganiwadha/adytus/apps/api/internal/config"
@@ -54,12 +58,19 @@ func run() error {
 	sessions := session.NewStore(cfg.SessionTTL, cfg.SessionIdle)
 	go sessions.Run(ctx, time.Minute)
 
+	ledger := &billing.Ledger{DB: pool, DailyCapMicros: cfg.DailyCapMicros, HoldTTL: cfg.HoldTTL}
+	deposits, err := buildDeposits(ctx, cfg, pool, ledger)
+	if err != nil {
+		return err
+	}
+
 	srv := server.New(server.Deps{
 		Config:   cfg,
 		Store:    &store.Store{DB: pool},
-		Ledger:   &billing.Ledger{DB: pool, DailyCapMicros: cfg.DailyCapMicros, HoldTTL: cfg.HoldTTL},
+		Ledger:   ledger,
 		LLM:      llm.NewRegistry(llm.DialOpenAI),
 		Payments: billing.MockGateway{},
+		Deposits: deposits,
 		Sessions: sessions,
 		Blobs:    blobs,
 		Tools:    registry,
@@ -75,6 +86,10 @@ func run() error {
 		return err
 	}
 	catalog := srv.LLM.Current().Catalog
+
+	if deposits != nil {
+		go deposits.Run(ctx)
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -127,4 +142,42 @@ func buildTools(ctx context.Context, cfg *config.Config) (*tools.Registry, func(
 		return nil, nil, err
 	}
 	return reg, closePy, nil
+}
+
+// buildDeposits sets up crypto payments, or returns nil when BASE_XPUB is
+// unset. It checks the RPC serves the configured chain, so a mainnet xpub is
+// never watched through a testnet endpoint.
+func buildDeposits(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, ledger *billing.Ledger) (*billing.Deposits, error) {
+	if cfg.BaseXPub == "" {
+		return nil, nil
+	}
+	deriver, err := base.NewDeriver(cfg.BaseXPub)
+	if err != nil {
+		return nil, err
+	}
+	chain := base.NewClient(cfg.BaseRPCURL)
+	id, err := chain.ChainID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("BASE_RPC_URL: %w", err)
+	}
+	if id != cfg.BaseChainID {
+		return nil, fmt.Errorf("BASE_RPC_URL serves chain %d, BASE_CHAIN_ID is %d", id, cfg.BaseChainID)
+	}
+	return &billing.Deposits{
+		DB: pool, Ledger: ledger, Chain: chain, Deriver: deriver,
+		Cfg: billing.DepositConfig{
+			ChainID:       cfg.BaseChainID,
+			USDC:          cfg.BaseUSDC,
+			ETHUSDFeed:    cfg.BaseETHUSDFeed,
+			Confirmations: cfg.CryptoConfirms,
+			QuoteTTL:      cfg.CryptoQuoteTTL,
+			MinMicros:     cfg.CryptoMinMicros,
+			DustMicros:    cfg.CryptoDustMicros,
+			ToleranceBps:  cfg.CryptoToleranceBP,
+			Poll:          cfg.CryptoPoll,
+			FastWindow:    24 * time.Hour,
+			FullScanEvery: cfg.CryptoFullScan,
+			MaxFeedAge:    time.Hour,
+		},
+	}, nil
 }

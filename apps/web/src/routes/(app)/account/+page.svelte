@@ -5,6 +5,7 @@
 	import RouteBadge from '#lib/components/RouteBadge.svelte';
 	import RecoveryStub from '#lib/components/RecoveryStub.svelte';
 	import Alert from '#lib/components/Alert.svelte';
+	import CryptoTopUp from '#lib/components/CryptoTopUp.svelte';
 
 	let plans = $state<Plan[]>([]);
 	let entries = $state<LedgerEntry[]>([]);
@@ -116,6 +117,8 @@
 		{#if error}<Alert title="Payment failed" ondismiss={() => (error = '')}><p>{error}</p></Alert>{/if}
 		<p class="muted">The daily spending limit resets at midnight UTC.</p>
 	</section>
+
+	<CryptoTopUp onpaid={loadLedger} />
 
 	<section aria-labelledby="ledger-h">
 		<h2 id="ledger-h">Usage and payments</h2>
