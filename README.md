@@ -69,17 +69,19 @@ docker compose exec postgres psql -U adytus -c "UPDATE users SET is_admin = true
 
 `GET /api/me` then lists `"privileges": ["backoffice"]` and the rail shows a Backoffice link. The backoffice is its own bundle (`apps/backoffice`, built to `dist/`), not part of the web app: the API serves it from `BACKOFFICE_DIR` at `/api/backoffice/ui/` behind the same admin check as its endpoints, with `Cache-Control: no-store`, and answers 404 to everyone else. The web app only holds a loader that imports it by URL. Admin rights are read from the database on every request, so revoking them is immediate. They give no access to anyone's chats or files.
 
-## Python sandbox
+## Python sandbox and document reader
 
-The model's Python tool runs each call in a throwaway container under [gVisor](https://gvisor.dev) (`runsc`), with numpy, scipy, Pillow and matplotlib. Containers have no network, a read-only root, no capabilities and an unprivileged user; a few are started ahead of time (`PYTHON_WARM`). The chat's files are copied into `/work/in`, and files the code writes to `/work/out` are saved to the user's files. Set it up with:
+The model's Python tool runs each call in [Pyodide](https://pyodide.org) (CPython 3.14 built for WebAssembly) in a fresh [Deno](https://deno.com) process, so it needs no Docker or VM and runs on a single PaaS box. Deno is started with an empty environment and no permissions but reading the Pyodide directory, so code has no network, environment, subprocesses or host files, even through Pyodide's bridge to JavaScript. Memory (`PYTHON_MEMORY_MB`, resident memory of the whole process) and wall time (`PYTHON_TIMEOUT`, imports included) are capped per run; one process is booted ahead of time (`PYTHON_WARM`). The chat's files are written to `/work/in` in Pyodide's in-memory filesystem, and files the code writes to `/work/out` are saved to the user's files. Nothing carries over between runs.
+
+Code can import numpy, scipy, pandas, matplotlib, Pillow, sympy, lxml, beautifulsoup4, pyyaml and xlrd, and for documents python-docx, python-pptx, openpyxl, xlsxwriter, pypdf, pdfminer.six, fpdf2 and tabulate. They're pinned with their hashes in `deploy/pyodide/fetch.ts`, which downloads Pyodide and extracts them; code can't install anything at run time. The image runs it at build time. For development, install Deno and run once from the repo root:
 
 ```sh
-# install runsc (https://gvisor.dev/docs/user_guide/install/), then:
-sudo runsc install && sudo systemctl restart docker
-docker build -t adytus-sandbox deploy/sandbox
+deno run --allow-net --allow-read --allow-write deploy/pyodide/fetch.ts apps/api/.pyodide
 ```
 
-The API uses the `runsc` runtime and won't start if Docker doesn't have it. On a dev machine without gVisor, `PYTHON_RUNTIME=runc` runs the same containers under plain Docker, which shares the host kernel with model-written code; the API logs a warning when it does. `PYTHON_ENABLED=false` turns the tool off. Packages are pinned in `deploy/sandbox/requirements.txt` and installed at build time; code can't install anything at run time. The API drives containers through the `docker` CLI, so its user needs access to the Docker daemon, which is root-equivalent on that host.
+The API won't start without Deno on `PATH` and that directory (`PYODIDE_DIR`, `.pyodide` relative to `apps/api` by default).
+
+The `read_document` tool gives the model a chat's PDF, Word, Excel and PowerPoint files as text, in Go: tables as Markdown, sheets, slides and pages under headings, long files in parts. PDFs go through [PDFium](https://pdfium.googlesource.com/pdfium/) compiled to WebAssembly, with no filesystem and bounded memory. Scanned PDFs have no text to read, as there's no OCR. Either tool being on lets users attach any file.
 
 ## Tests
 
@@ -92,4 +94,4 @@ cd apps/backoffice && bun run check
 
 Integration tests drop and recreate the schema of the database they're given, so point them at a throwaway one.
 
-The sandbox tests need Docker, the `adytus-sandbox` image and `runsc`, and skip without them; `PYTHON_RUNTIME=runc` runs them under plain Docker.
+The sandbox tests need Deno and `apps/api/.pyodide` (or `PYODIDE_DIR`), and skip without them.

@@ -46,7 +46,7 @@ type attachment struct {
 	Name  string    `json:"name"`
 	Image bool      `json:"image,omitempty"`
 	// Python marks a file the model doesn't read itself, only through the
-	// python tool: too large, not text, or an image it can't see.
+	// tools that open files: too large, not text, or an image it can't see.
 	Python bool `json:"python,omitempty"`
 }
 
@@ -383,7 +383,7 @@ func (at *attachments) message(b messageBody) *schema.Message {
 	var imgs []schema.MessageInputPart
 	for _, att := range b.Attachments {
 		if att.Python {
-			fmt.Fprintf(&sb, "<file name=%q>[not shown to you; the python tool can open it]</file>\n\n", att.Name)
+			fmt.Fprintf(&sb, "<file name=%q>[not shown to you; open it with your tools]</file>\n\n", att.Name)
 			continue
 		}
 		at.load(att)
@@ -436,11 +436,10 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	if spec.Tools && s.Tools != nil {
 		toolIDs = s.Tools.Enabled(settings.Tools)
 	}
-	python := slices.Contains(toolIDs, tools.PythonID)
+	opensFiles := slices.ContainsFunc(toolIDs, tools.OpensFiles)
 
 	// Attachments must be the user's files: text small enough to inline,
-	// images when the model has vision, or anything when the python tool
-	// can open it.
+	// images when the model has vision, or anything when a tool can open it.
 	userMsg := messageBody{Role: "user", Content: req.Content}
 	at := &attachments{s: s, ctx: ctx, a: a, vision: spec.Vision, text: map[uuid.UUID]string{}, images: map[uuid.UUID]string{}}
 	total := 0
@@ -460,7 +459,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		case fm.Text && total+len(data) <= maxAttachmentBytes:
 			total += len(data)
 			at.text[id] = string(data)
-		case python:
+		case opensFiles:
 			att.Python = true
 		case fm.Image && !spec.Vision:
 			return errs.Validation.New("%s can't see images; switch to a vision model to attach %s", spec.Name, fm.Name)
@@ -469,7 +468,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 		case fm.Text:
 			return errs.Validation.New("attachments are too large (max %d KB of text in total)", maxAttachmentBytes/1024)
 		default:
-			return errs.Validation.New("%s can't be attached; only text files and images can, or any file when the Python tool is on", fm.Name)
+			return errs.Validation.New("%s can't be attached; only text files and images can, or any file when the document reader or Python tool is on", fm.Name)
 		}
 		userMsg.Attachments = append(userMsg.Attachments, att)
 	}
@@ -478,11 +477,11 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	// The python tool can open the chat's files: everything attached and
+	// The file tools can open the chat's files: everything attached and
 	// everything tools saved, newest first.
 	var ws *workspace
 	system := s.Config.SystemPrompt
-	if python {
+	if opensFiles {
 		var ids []uuid.UUID
 		for _, m := range append(history, messageView{messageBody: userMsg}) {
 			for _, att := range m.Attachments {

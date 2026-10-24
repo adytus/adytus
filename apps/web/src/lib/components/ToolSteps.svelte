@@ -14,18 +14,20 @@
 	const labels: Record<string, string> = {
 		calculator: 'Calculated',
 		python: 'Ran Python',
+		read_document: 'Read',
 		web_search: 'Searched the web'
 	};
 	const pending: Record<string, string> = {
 		calculator: 'Calculating',
 		python: 'Running Python',
+		read_document: 'Reading',
 		web_search: 'Searching the web'
 	};
 
 	function args(s: ToolStep): string {
 		try {
 			const a = JSON.parse(s.input);
-			return a.expression ?? a.query ?? a.code ?? s.input;
+			return a.expression ?? a.query ?? a.code ?? a.name ?? s.input;
 		} catch {
 			return s.input;
 		}

@@ -97,7 +97,7 @@ export type Tool = {
 	default_on: boolean;
 	enabled: boolean;
 };
-// python marks a file the model isn't shown but the python tool can open.
+// python marks a file the model isn't shown but its file tools can open.
 export type Attachment = { id: string; name: string; image?: boolean; python?: boolean };
 export type Message = {
 	id: string;

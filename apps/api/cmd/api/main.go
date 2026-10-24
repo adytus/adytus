@@ -103,44 +103,38 @@ func run() error {
 	return srv.App.Listen(cfg.Addr)
 }
 
-// buildTools sets up the tools whose backends are configured. Without the
-// configured docker runtime the API won't start unless PYTHON_ENABLED=false.
-// The returned func releases the sandbox.
+// buildTools sets up the tools. Search is left out without SEARXNG_URL; the
+// Python sandbox and document reader are always there, so the API won't start
+// without Deno and Pyodide. The returned func releases them.
 func buildTools(ctx context.Context, cfg *config.Config) (*tools.Registry, func(), error) {
 	var search *tools.Search
 	if cfg.SearxngURL != "" {
 		search = tools.NewSearch(cfg.SearxngURL)
 	}
-	var py tools.PythonRunner
-	if cfg.PythonEnabled {
-		p, err := tools.NewGvisor(ctx, tools.GvisorConfig{
-			Image:    cfg.PythonImage,
-			Runtime:  cfg.PythonRuntime,
-			Timeout:  cfg.PythonTimeout,
-			MemoryMB: cfg.PythonMemoryMB,
-			CPUs:     cfg.PythonCPUs,
-			MaxOut:   16 << 10,
-			Parallel: cfg.PythonParallel,
-			Warm:     cfg.PythonWarm,
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		py = p
-	}
-	closePy := func() {
-		if py != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_ = py.Close(ctx)
-		}
-	}
-	reg, err := tools.NewRegistry(search, py)
+	py, err := tools.NewPyodide(ctx, tools.PyodideConfig{
+		Dir:      cfg.PyodideDir,
+		Timeout:  cfg.PythonTimeout,
+		MemoryMB: cfg.PythonMemoryMB,
+		MaxOut:   16 << 10,
+		Parallel: cfg.PythonParallel,
+		Warm:     cfg.PythonWarm,
+	})
 	if err != nil {
-		closePy()
 		return nil, nil, err
 	}
-	return reg, closePy, nil
+	docs := tools.NewDocuments()
+	release := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = py.Close(ctx)
+		_ = docs.Close()
+	}
+	reg, err := tools.NewRegistry(search, py, docs)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	return reg, release, nil
 }
 
 // buildDeposits sets up crypto payments, or returns nil when BASE_XPUB is

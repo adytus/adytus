@@ -1,9 +1,7 @@
 package tools
 
 import (
-	"archive/tar"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -95,39 +93,4 @@ func (o *outputs) note() string {
 		return ""
 	}
 	return fmt.Sprintf("\n[not saved: %s; at most %d files of %d MB each]", strings.Join(o.skipped, ", "), MaxOutputFiles, MaxOutputBytes>>20)
-}
-
-// readTar collects the regular files at the top of a tar stream; links,
-// directories and anything nested are ignored.
-func (o *outputs) readTar(r io.Reader) error {
-	tr := tar.NewReader(r)
-	for {
-		h, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if h.Typeflag != tar.TypeReg || strings.Contains(strings.TrimPrefix(path.Clean(h.Name), "./"), "/") {
-			continue
-		}
-		if err := o.add(h.Name, h.Size, tr); err != nil {
-			return err
-		}
-	}
-}
-
-// writeTar writes files as a tar stream of top-level entries.
-func writeTar(w io.Writer, files []File) error {
-	tw := tar.NewWriter(w)
-	for _, f := range files {
-		if err := tw.WriteHeader(&tar.Header{Name: f.Name, Mode: 0o644, Size: int64(len(f.Data)), Typeflag: tar.TypeReg}); err != nil {
-			return err
-		}
-		if _, err := tw.Write(f.Data); err != nil {
-			return err
-		}
-	}
-	return tw.Close()
 }

@@ -46,7 +46,7 @@ func TestSearchAndObserver(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := NewRegistry(NewSearch(srv.URL), nil)
+	reg, err := NewRegistry(NewSearch(srv.URL), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestSearchAndObserver(t *testing.T) {
 }
 
 func TestObservedReportsSteps(t *testing.T) {
-	reg, err := NewRegistry(nil, nil)
+	reg, err := NewRegistry(nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

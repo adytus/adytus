@@ -166,7 +166,8 @@ type env struct {
 
 func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
 
-// newEnvWith sets up a server whose python tool runs on py.
+// newEnvWith sets up a server whose python tool runs on py; the document
+// reader comes with it, as in production.
 func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
@@ -205,7 +206,11 @@ func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 		KDF:            crypto.KDFParams{Time: 1, MemoryKiB: 1024, Threads: 1},
 		ToolMaxSteps:   4,
 	}
-	registry, err := tools.NewRegistry(nil, py)
+	var docs *tools.Documents
+	if py != nil {
+		docs = tools.NewDocuments()
+	}
+	registry, err := tools.NewRegistry(nil, py, docs)
 	if err != nil {
 		t.Fatal(err)
 	}

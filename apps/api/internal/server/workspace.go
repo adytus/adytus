@@ -149,7 +149,7 @@ func (ws *workspace) prompt() string {
 	if len(names) == 0 {
 		return ""
 	}
-	return "\n\nFiles in this chat, which the python tool can open by name: " + strings.Join(names, ", ") + "."
+	return "\n\nFiles in this chat, which your tools can open by name: " + strings.Join(names, ", ") + "."
 }
 
 func (ws *workspace) close() {

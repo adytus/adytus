@@ -1,5 +1,5 @@
-// Package tools holds the tools a model may call: a calculator, web search
-// and a Python sandbox. Each is an Eino tool, so Eino's agents drive the
+// Package tools holds the tools a model may call: a calculator, web search,
+// a document reader and a Python sandbox. Each is an Eino tool, so Eino's agents drive the
 // calling loop; this package only adds the user-facing descriptions and a
 // hook that reports each call to the chat stream as it happens.
 package tools
@@ -31,6 +31,8 @@ type Info struct {
 type entry struct {
 	Info
 	tool tool.InvokableTool
+	// limit bounds the output the model gets; 0 means maxStepOutput.
+	limit int
 }
 
 // Registry holds the tools this server is configured with.
@@ -42,9 +44,13 @@ const (
 	Calculator = "calculator"
 	WebSearch  = "web_search"
 	PythonID   = "python"
+	ReadDocID  = "read_document"
 )
 
-// PythonRunner runs the python tool's code: Gvisor, or a fake in tests.
+// OpensFiles reports whether the tool reads the chat's files.
+func OpensFiles(id string) bool { return id == PythonID || id == ReadDocID }
+
+// PythonRunner runs the python tool's code: Pyodide, or a fake in tests.
 type PythonRunner interface {
 	// Run runs code with in copied to InDir.
 	Run(ctx context.Context, code string, in []File) (PythonResult, error)
@@ -53,9 +59,9 @@ type PythonRunner interface {
 	Close(ctx context.Context) error
 }
 
-// NewRegistry builds the tools that are configured; search and python are
-// left out when their backend is nil.
-func NewRegistry(search *Search, py PythonRunner) (*Registry, error) {
+// NewRegistry builds the tools that are configured; search, documents and
+// python are left out when their backend is nil.
+func NewRegistry(search *Search, py PythonRunner, docs *Documents) (*Registry, error) {
 	r := &Registry{}
 
 	calc, err := utils.InferTool(Calculator,
@@ -72,11 +78,11 @@ func NewRegistry(search *Search, py PythonRunner) (*Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.entries = append(r.entries, entry{Info{
+	r.entries = append(r.entries, entry{Info: Info{
 		ID: Calculator, Name: "Calculator",
 		Description: "Exact arithmetic, worked out on this server.",
 		DefaultOn:   true,
-	}, calc})
+	}, tool: calc})
 
 	if search != nil {
 		t, err := utils.InferTool(WebSearch,
@@ -97,18 +103,37 @@ func NewRegistry(search *Search, py PythonRunner) (*Registry, error) {
 		if err != nil {
 			return nil, err
 		}
-		r.entries = append(r.entries, entry{Info{
+		r.entries = append(r.entries, entry{Info: Info{
 			ID: WebSearch, Name: "Web search",
 			Description:  "Looks things up on the web. The search text is sent to public search engines, without your account details.",
 			LeavesServer: true,
-		}, t})
+		}, tool: t})
+	}
+
+	if docs != nil {
+		t, err := utils.InferTool(ReadDocID,
+			"Read a file in this chat as text: PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) or plain text. Tables come back as Markdown, sheets and slides under headings, PDFs page by page. Long files come in parts; call again with the start it gives to read on. Use it first to see what a document says; use the python tool to compute over it or change it.",
+			func(ctx context.Context, in struct {
+				Name  string `json:"name" jsonschema:"description=The file's name in this chat"`
+				Start int    `json:"start,omitempty" jsonschema:"description=Character offset to read from, given by the previous call"`
+			}) (string, error) {
+				return readDocument(ctx, docs, in.Name, in.Start)
+			})
+		if err != nil {
+			return nil, err
+		}
+		r.entries = append(r.entries, entry{Info: Info{
+			ID: ReadDocID, Name: "Document reader",
+			Description: "Reads the PDFs, Word, Excel and PowerPoint files in a chat, on this server.",
+			DefaultOn:   true,
+		}, tool: t, limit: docChunk + 1000})
 	}
 
 	if py != nil {
-		desc := "Run Python 3.12 code and get its printed output. No network; each run starts fresh. print() whatever you need to see. Use it for data processing, simulations and precise calculations. " +
+		desc := "Run Python 3.14 code and get its printed output. No network; each run starts fresh. print() whatever you need to see. Use it for data processing, simulations and precise calculations. " +
 			"To work on the chat's files, name them in `files`: they are copied to " + InDir + "/<name> before the code runs. " + py.About()
 		desc += fmt.Sprintf(" Files the code writes to %s/ (at most %d, %d MB each) are saved to the user's files and shown in the chat: use this to make images, charts, CSVs and other files for the user, and mention them in your reply by name.", OutDir, MaxOutputFiles, MaxOutputBytes>>20)
-		about := "Runs code the model writes, isolated on this server: no internet, a few seconds per run. It can read the files in a chat and make new ones for you, like resized images or charts."
+		about := "Runs code the model writes, isolated on this server: no internet, limited time and memory per run. It can read the files in a chat and make new ones for you, like resized images or charts."
 		t, err := utils.InferTool(PythonID, desc,
 			func(ctx context.Context, in struct {
 				Code  string   `json:"code" jsonschema:"description=A complete Python program; print the results"`
@@ -119,13 +144,30 @@ func NewRegistry(search *Search, py PythonRunner) (*Registry, error) {
 		if err != nil {
 			return nil, err
 		}
-		r.entries = append(r.entries, entry{Info{
+		r.entries = append(r.entries, entry{Info: Info{
 			ID: PythonID, Name: "Python sandbox",
 			Description: about,
 			DefaultOn:   true,
-		}, t})
+		}, tool: t})
 	}
 	return r, nil
+}
+
+// readDocument reads a file of the chat's as text.
+func readDocument(ctx context.Context, docs *Documents, name string, start int) (string, error) {
+	ws := workspaceFrom(ctx)
+	if ws == nil {
+		return "error: there are no files in this chat", nil
+	}
+	data, err := ws.Read(ctx, name)
+	if err != nil {
+		return fmt.Sprintf("error: %s: %s; the chat's files are: %s", name, err, strings.Join(ws.Names(), ", ")), nil
+	}
+	out, err := docs.Read(ctx, name, data, start)
+	if err != nil {
+		return "error: " + err.Error(), nil
+	}
+	return out, nil
 }
 
 // runPython runs code with the named files and saves what it writes.
@@ -239,18 +281,25 @@ func (r *Registry) Tools(ids []string, observe Observer) []tool.BaseTool {
 	for _, e := range r.entries {
 		for _, id := range ids {
 			if e.ID == id {
-				out = append(out, &observed{e.tool, observe})
+				limit := e.limit
+				if limit == 0 {
+					limit = maxStepOutput
+				}
+				out = append(out, &observed{e.tool, observe, limit})
 			}
 		}
 	}
 	return out
 }
 
+// maxStepOutput bounds a call's output as kept on its step, and as the
+// model gets it unless the tool sets its own limit.
 const maxStepOutput = 4000
 
 type observed struct {
 	tool.InvokableTool
 	observe Observer
+	limit   int
 }
 
 func (o *observed) InvokableRun(ctx context.Context, args string, opts ...tool.Option) (string, error) {
@@ -275,7 +324,7 @@ func (o *observed) InvokableRun(ctx context.Context, args string, opts ...tool.O
 	if o.observe != nil {
 		o.observe(step)
 	}
-	return truncate(out, maxStepOutput), err
+	return truncate(out, o.limit), err
 }
 
 var _ tool.InvokableTool = (*observed)(nil)

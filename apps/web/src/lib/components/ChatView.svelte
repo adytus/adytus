@@ -35,7 +35,7 @@
 	let uploading = $state(false);
 	let gallery = $state<{ images: GalleryImage[]; index: number } | null>(null);
 	let noThumb = $state<Record<string, boolean>>({});
-	// Any file can be attached when the python tool is on to open it.
+	// Any file can be attached when a tool that opens files is on.
 	let pythonOn = $state(false);
 
 	let streaming = $state(false);
@@ -239,7 +239,10 @@
 
 	$effect(() => {
 		api.settings().then(
-			(s) => (pythonOn = s.tools.some((t) => t.id === 'python' && t.enabled)),
+			(s) =>
+				(pythonOn = s.tools.some(
+					(t) => (t.id === 'python' || t.id === 'read_document') && t.enabled
+				)),
 			() => {}
 		);
 	});

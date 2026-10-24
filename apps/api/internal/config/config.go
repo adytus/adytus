@@ -44,17 +44,13 @@ type Config struct {
 	MaxUploadBytes int    `env:"MAX_UPLOAD_BYTES" envDefault:"26214400"`
 
 	// Tools. An empty SEARXNG_URL leaves web search out. The Python sandbox
-	// runs in docker containers under gVisor (PYTHON_RUNTIME=runsc);
-	// PYTHON_RUNTIME=runc runs them without it, for machines that lack it.
-	// PYTHON_ENABLED=false leaves the sandbox out.
+	// is always on: it runs Pyodide under Deno, from the directory that
+	// deploy/pyodide/fetch.ts fills (the image has it at /app/pyodide).
 	SearxngURL     string        `env:"SEARXNG_URL" envDefault:"http://127.0.0.1:8888"`
-	PythonEnabled  bool          `env:"PYTHON_ENABLED" envDefault:"true"`
-	PythonImage    string        `env:"PYTHON_IMAGE" envDefault:"adytus-sandbox"`
-	PythonRuntime  string        `env:"PYTHON_RUNTIME" envDefault:"runsc"`
-	PythonCPUs     string        `env:"PYTHON_CPUS" envDefault:"1"`
-	PythonWarm     int           `env:"PYTHON_WARM" envDefault:"2"`
-	PythonTimeout  time.Duration `env:"PYTHON_TIMEOUT" envDefault:"10s"`
-	PythonMemoryMB int           `env:"PYTHON_MEMORY_MB" envDefault:"256"`
+	PyodideDir     string        `env:"PYODIDE_DIR" envDefault:".pyodide"`
+	PythonWarm     int           `env:"PYTHON_WARM" envDefault:"1"`
+	PythonTimeout  time.Duration `env:"PYTHON_TIMEOUT" envDefault:"30s"`
+	PythonMemoryMB int           `env:"PYTHON_MEMORY_MB" envDefault:"1024"`
 	PythonParallel int           `env:"PYTHON_PARALLEL" envDefault:"2"`
 	ToolMaxSteps   int           `env:"TOOL_MAX_STEPS" envDefault:"8"`
 

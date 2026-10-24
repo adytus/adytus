@@ -5,3 +5,4 @@ apps/web/.vercel
 apps/backoffice/dist
 apps/api/.env
 docs
+**/.pyodide
