@@ -473,11 +473,13 @@ func markdownTable(rows [][]string) string {
 func (d *Documents) pdf(ctx context.Context, data []byte) (string, error) {
 	d.once.Do(func() {
 		d.pool, d.poolErr = webassembly.Init(webassembly.Config{
-			MinIdle: 0, MaxIdle: 1, MaxTotal: 2,
+			// One instance, so PDFs read one after another: two at once, each
+			// allowed its full memory, outgrew the container and got it killed.
+			MinIdle: 0, MaxIdle: 1, MaxTotal: 1,
 			// No mounts: PDFium sees no files but the one it is given.
 			FSConfig: wazero.NewFSConfig(),
-			// 512 MB of WebAssembly pages; PDFium needs exception handling.
-			RuntimeConfig: wazero.NewRuntimeConfig().WithMemoryLimitPages(8192).
+			// 256 MB of WebAssembly pages; PDFium needs exception handling.
+			RuntimeConfig: wazero.NewRuntimeConfig().WithMemoryLimitPages(4096).
 				WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling),
 		})
 	})
