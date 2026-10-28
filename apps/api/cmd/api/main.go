@@ -149,7 +149,19 @@ func buildDeposits(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		return nil, err
 	}
 	chain := base.NewClient(cfg.BaseRPCURL)
-	id, err := chain.ChainID(ctx)
+	// A rate-limited RPC (http 429) is usually gone in seconds; retry before
+	// giving up, so a busy endpoint doesn't crash-loop the whole API.
+	var id int64
+	for attempt := range 5 {
+		if id, err = chain.ChainID(ctx); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 2 * time.Second):
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("BASE_RPC_URL: %w", err)
 	}
