@@ -14,6 +14,7 @@
 		type ToolStep
 	} from '../api.ts';
 	import { app, handoff } from '../state.svelte.ts';
+	import { isCodingQuery } from '../coding.ts';
 	import ModelIcon from './ModelIcon.svelte';
 	import ModelPicker from './ModelPicker.svelte';
 	import ToolSteps from './ToolSteps.svelte';
@@ -81,6 +82,13 @@
 		);
 		return () => controller?.abort();
 	});
+
+	// question returns the user message the reply at index i answers. The tool
+	// line reads it to tell a coding question from a plain one.
+	function question(i: number): string {
+		for (let j = i - 1; j >= 0; j--) if (messages[j].role === 'user') return messages[j].content;
+		return '';
+	}
 
 	async function scrollDown() {
 		await tick();
@@ -433,7 +441,7 @@
 				</div>
 			{/if}
 
-			{#each messages as m (m.id)}
+			{#each messages as m, i (m.id)}
 				{#if m.role === 'user'}
 					<article class="ticket q">
 						<p class="text">{m.content}</p>
@@ -458,7 +466,14 @@
 					</article>
 				{:else}
 					<article class="a">
-						{#if m.steps?.length}<ToolSteps steps={m.steps} color={lineColor(m.model)} onview={(id) => view(chatImages, id)} />{/if}
+						{#if m.steps?.length}
+							<ToolSteps
+								steps={m.steps}
+								color={lineColor(m.model)}
+								coding={isCodingQuery(question(i))}
+								onview={(id) => view(chatImages, id)}
+							/>
+						{/if}
 						<Markdown text={m.content} />
 						<p class="receipt">
 							<span class="who">
@@ -480,7 +495,9 @@
 
 			{#if streaming}
 				<article class="a live" aria-live="polite">
-					{#if liveSteps.length}<ToolSteps steps={liveSteps} color={lineColor(modelID)} />{/if}
+					{#if liveSteps.length}
+						<ToolSteps steps={liveSteps} color={lineColor(modelID)} coding={isCodingQuery(question(messages.length))} />
+					{/if}
 					{#if liveThinking && !liveText}
 						<details class="thinking">
 							<summary>Thinking…</summary>

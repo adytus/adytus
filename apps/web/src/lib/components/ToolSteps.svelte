@@ -3,11 +3,13 @@
 
 	// The tool calls behind a reply, drawn as stops along a line. Files a
 	// tool saved show under its stop; onview opens an image in the viewer.
+	// coding says the question was about code, so python is shown by name.
 	let {
 		steps,
 		color = 'var(--line-purple)',
-		onview
-	}: { steps: ToolStep[]; color?: string; onview?: (id: string) => void } = $props();
+		onview,
+		coding = false
+	}: { steps: ToolStep[]; color?: string; onview?: (id: string) => void; coding?: boolean } = $props();
 
 	let noThumb = $state<Record<string, boolean>>({});
 
@@ -23,6 +25,15 @@
 		read_document: 'Reading',
 		web_search: 'Searching the web'
 	};
+
+	// A python step in a question that wasn't about code is the model working
+	// something out, not running the user's program: say "Calculating" and
+	// leave the code folded away until the step is opened.
+	function label(s: ToolStep): string {
+		const quiet = s.tool === 'python' && !coding;
+		if (s.done) return quiet ? 'Calculated' : (labels[s.tool] ?? s.tool);
+		return `${quiet ? 'Calculating' : (pending[s.tool] ?? s.tool)}…`;
+	}
 
 	function args(s: ToolStep): string {
 		try {
@@ -52,7 +63,7 @@
 			<span class="dot" aria-hidden="true"></span>
 			<details>
 				<summary>
-					<span class="what">{s.done ? (labels[s.tool] ?? s.tool) : `${pending[s.tool] ?? s.tool}…`}</span>
+					<span class="what">{label(s)}</span>
 					{#if s.tool !== 'python'}<span class="arg">{arg}</span>{/if}
 					{#if s.done && s.ms}<span class="ms">{s.ms < 1000 ? `${s.ms} ms` : `${(s.ms / 1000).toFixed(1)} s`}</span>{/if}
 				</summary>
@@ -73,7 +84,7 @@
 					{/if}
 				</div>
 			</details>
-			{#if s.tool === 'python' && !s.done}<pre class="code peek">{arg}</pre>{/if}
+			{#if s.tool === 'python' && !s.done && coding}<pre class="code peek">{arg}</pre>{/if}
 			{#if s.files?.length}
 				<ul class="made">
 					{#each s.files as f (f.id)}
