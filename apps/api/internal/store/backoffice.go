@@ -64,16 +64,18 @@ func UpdateProvider(ctx context.Context, q DBTX, by uuid.UUID, id, baseURL strin
 // --- models ---
 
 type ModelRow struct {
-	Spec      llm.Model
-	Enabled   bool
-	Default   bool
+	Spec    llm.Model
+	Enabled bool
+	Default bool
+	// Single marks single model mode's one model.
+	Single    bool
 	UpdatedAt time.Time
 }
 
 // Models returns every model, enabled or not, in picker order.
 func Models(ctx context.Context, q DBTX) ([]ModelRow, error) {
 	rows, err := q.Query(ctx, `
-		SELECT spec, enabled, is_default, updated_at FROM llm_models ORDER BY position, id`)
+		SELECT spec, enabled, is_default, is_single, updated_at FROM llm_models ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -87,12 +89,14 @@ func CountModels(ctx context.Context, q DBTX) (int, error) {
 }
 
 // UpsertModel saves a model's spec and switch. A new model goes last.
+// Disabling the one single model turns single model mode off.
 func UpsertModel(ctx context.Context, q DBTX, by uuid.UUID, m llm.Model, enabled bool) error {
 	_, err := q.Exec(ctx, `
 		INSERT INTO llm_models (id, provider, spec, enabled, position, updated_by)
 		VALUES ($1, $2, $3, $4, (SELECT coalesce(max(position), 0) + 1 FROM llm_models), $5)
 		ON CONFLICT (id) DO UPDATE
 		SET provider = excluded.provider, spec = excluded.spec, enabled = excluded.enabled,
+		    is_single = llm_models.is_single AND excluded.enabled,
 		    updated_by = excluded.updated_by, updated_at = now()`,
 		m.ID, m.Provider, m, enabled, uuid.NullUUID{UUID: by, Valid: by != uuid.Nil})
 	return err
@@ -100,6 +104,23 @@ func UpsertModel(ctx context.Context, q DBTX, by uuid.UUID, m llm.Model, enabled
 
 func DeleteModel(ctx context.Context, q DBTX, id string) error {
 	tag, err := q.Exec(ctx, `DELETE FROM llm_models WHERE id = $1`, id)
+	if err == nil && tag.RowsAffected() == 0 {
+		return errs.NotFound.New("no model %q", id)
+	}
+	return err
+}
+
+// SetSingleModel makes id the only model users are offered; an empty id turns
+// single model mode off.
+func SetSingleModel(ctx context.Context, q DBTX, id string) error {
+	if id == "" {
+		_, err := q.Exec(ctx, `UPDATE llm_models SET is_single = false WHERE is_single`)
+		return err
+	}
+	if _, err := q.Exec(ctx, `UPDATE llm_models SET is_single = false WHERE is_single AND id <> $1`, id); err != nil {
+		return err
+	}
+	tag, err := q.Exec(ctx, `UPDATE llm_models SET is_single = true WHERE id = $1`, id)
 	if err == nil && tag.RowsAffected() == 0 {
 		return errs.NotFound.New("no model %q", id)
 	}

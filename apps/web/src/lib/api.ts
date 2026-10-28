@@ -2,6 +2,8 @@ export type User = { id: string; email: string; created_at: string };
 export type Model = {
 	id: string;
 	name: string;
+	// Our own blurb for the picker, when the model was rebranded.
+	description?: string;
 	// Prices are only sent to backoffice users.
 	prompt_usd_per_mtok?: number;
 	completion_usd_per_mtok?: number;
@@ -166,7 +168,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 const get = <T>(p: string) => call<T>('GET', p);
 
 export const api = {
-	models: () => get<{ models: Model[]; default: string }>('/api/models'),
+	// single is the only model offered in single model mode, or '' when off.
+	models: () => get<{ models: Model[]; default: string; single: string }>('/api/models'),
 
 	// privileges lists what the user may open beyond their own data, e.g.
 	// 'backoffice'. The API enforces each one; this only decides what to show.
@@ -225,7 +228,9 @@ export const api = {
 export type Settings = { tools: Tool[]; auto_title: boolean };
 
 export type StreamHandlers = {
-	start?: (d: { user_message_id: string; message_id: string; title: string; hold_micros: number }) => void;
+	// model is sent when the server moved the chat, as single model mode
+	// does with chats started before it was switched on.
+	start?: (d: { user_message_id: string; message_id: string; title: string; model?: string; hold_micros: number }) => void;
 	title?: (d: { title: string }) => void;
 	delta?: (d: { text: string }) => void;
 	reasoning?: (d: { text: string }) => void;

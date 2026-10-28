@@ -37,6 +37,28 @@ func TestCost(t *testing.T) {
 	}
 }
 
+func TestCatalogSingleModel(t *testing.T) {
+	a := Model{ID: "a", Provider: Ollama, Upstream: "up", ContextTokens: 200, MaxOutputTokens: 50}
+	b := Model{ID: "b", Provider: Ollama, Upstream: "up", ContextTokens: 200, MaxOutputTokens: 50}
+	cat, err := NewCatalog([]Model{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cat.Single() != "" {
+		t.Fatalf("single on by default: %q", cat.Single())
+	}
+	if got := cat.WithSingle("b").Single(); got != "b" {
+		t.Fatalf("single = %q, want b", got)
+	}
+	// An unknown or empty id turns the mode off.
+	if got := cat.WithSingle("nope").Single(); got != "" {
+		t.Fatalf("single = %q, want off", got)
+	}
+	if got := cat.WithSingle("").Single(); got != "" {
+		t.Fatalf("single = %q, want off", got)
+	}
+}
+
 func TestFitContextDropsOldest(t *testing.T) {
 	long := strings.Repeat("x", 210) // 70 tokens + 4 overhead
 	msgs := []*schema.Message{

@@ -75,6 +75,7 @@
 						<ModelIcon icon={m.icon} size={2} />
 						<span class="info">
 							<span class="oname">{m.name}</span>
+							{#if m.description}<span class="meta desc">{m.description}</span>{/if}
 							{#if showPrices}
 								<span class="meta">
 									{price(m.prompt_usd_per_mtok ?? 0)} in, {price(m.completion_usd_per_mtok ?? 0)} out per million tokens
@@ -181,6 +182,14 @@
 	.meta {
 		font-size: 0.75rem;
 		color: var(--muted);
+	}
+	/* A backoffice description can be long; show the first lines. */
+	.desc {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
 	}
 	.caps {
 		display: flex;

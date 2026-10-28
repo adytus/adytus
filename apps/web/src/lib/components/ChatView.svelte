@@ -66,7 +66,9 @@
 			(r) => {
 				chat = r.chat;
 				messages = r.messages;
-				modelID = r.chat.model;
+				// Single model mode runs every chat on its one model; older
+				// chats are moved there on their next message.
+				modelID = app.singleModel || r.chat.model;
 				loading = false;
 				scrollDown();
 				const p = handoff.pending;
@@ -138,6 +140,12 @@
 				{
 					start: (d) => {
 						holdMicros = d.hold_micros;
+						// Single model mode moves an older chat onto the one
+						// model; follow it so the header agrees.
+						if (d.model) {
+							modelID = d.model;
+							if (chat) chat.model = d.model;
+						}
 						if (chat) {
 							// The chat moves to the top of the list as soon as it's sent to.
 							if (d.title && !chat.title) chat.title = d.title;
@@ -368,6 +376,13 @@
 	}
 </script>
 
+{#snippet lock()}
+	<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+		<rect x="4" y="10.5" width="16" height="10.5" rx="2" fill="currentColor" />
+		<path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" />
+	</svg>
+{/snippet}
+
 <section
 	class="chat"
 	ondragenter={dragEnter}
@@ -379,7 +394,9 @@
 	{#if dragDepth > 0 && !loadError}
 		<div class="dropzone" aria-hidden="true">
 			<p>Drop files to attach them</p>
-			<p class="muted">Up to {maxAttached} per message, encrypted before they're stored.</p>
+			<p class="muted">
+				Up to {maxAttached} per message. Files are encrypted and stored safely in Adytus.
+			</p>
 		</div>
 	{/if}
 	<header class="bar">
@@ -396,13 +413,20 @@
 			<h1 class="title static">New chat</h1>
 		{/if}
 		<div class="controls">
-			<ModelPicker
-				models={app.models}
-				value={modelID}
-				disabled={streaming}
-				showPrices={app.can('backoffice')}
-				onchange={changeModel}
-			/>
+			{#if app.singleModel}
+				<span class="fixed-model">
+					<ModelIcon icon={app.model(app.singleModel)?.icon} size={1.375} />
+					{app.model(app.singleModel)?.name ?? app.singleModel}
+				</span>
+			{:else}
+				<ModelPicker
+					models={app.models}
+					value={modelID}
+					disabled={streaming}
+					showPrices={app.can('backoffice')}
+					onchange={changeModel}
+				/>
+			{/if}
 			{#if chat}
 				<button class="quiet danger" onclick={remove}>Delete chat</button>
 			{/if}
@@ -425,6 +449,7 @@
 							<ModelIcon icon={model.icon} size={2.5} />
 							<div>
 								<p class="rider-name">{model.name}</p>
+								{#if model.description}<p class="muted rider-desc">{model.description}</p>{/if}
 								{#if app.can('backoffice') || model.tools || model.vision}
 									<p class="muted">
 										{#if app.can('backoffice')}
@@ -437,7 +462,7 @@
 							</div>
 						</div>
 					{/if}
-					<p class="muted small">Messages are encrypted before they're stored.</p>
+					<p class="muted small">Messages and files are encrypted before they're stored in Adytus.</p>
 				</div>
 			{/if}
 
@@ -462,6 +487,12 @@
 							<ul class="att">
 								{#each m.attachments.filter((a) => !a.image) as a (a.id)}<li>{a.name}</li>{/each}
 							</ul>
+						{/if}
+						{#if m.attachments?.length}
+							<p class="sealed">
+								{@render lock()}
+								Encrypted and stored safely in Adytus. Only you can read {m.attachments.length === 1 ? 'it' : 'them'}.
+							</p>
 						{/if}
 					</article>
 				{:else}
@@ -547,11 +578,8 @@
 					{/each}
 				</ul>
 				<p class="sealed">
-					<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-						<rect x="4" y="10.5" width="16" height="10.5" rx="2" fill="currentColor" />
-						<path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" />
-					</svg>
-					Uploaded files are encrypted before they're stored.
+					{@render lock()}
+					Stored safely in Adytus: files are encrypted before they're stored, and only you can read them.
 				</p>
 			{/if}
 			{#if pickerOpen}
@@ -560,6 +588,10 @@
 						Upload files
 						<input type="file" class="sr-only" multiple onchange={uploadPicked} />
 					</label>
+					<p class="sealed">
+						{@render lock()}
+						Files you attach are encrypted and stored safely in Adytus. Only you can read them.
+					</p>
 					{#each pickable as f (f.id)}
 						<button type="button" class="pick" onclick={() => attach(f)}>
 							{#if f.thumb}<img src={api.thumbURL(f.id)} alt="" loading="lazy" />{/if}
@@ -677,6 +709,18 @@
 		gap: 0.5rem;
 		flex-wrap: wrap;
 	}
+	/* Single model mode shows the model's name without a picker. */
+	.fixed-model {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		background: var(--surface);
+		border: 2px solid var(--rule);
+		border-radius: 999px;
+		padding: 0.25rem 0.75rem 0.25rem 0.3rem;
+		font-size: 0.875rem;
+		font-weight: 700;
+	}
 	.quiet {
 		font: inherit;
 		font-size: 0.8125rem;
@@ -703,6 +747,9 @@
 	}
 	.rider .muted {
 		margin: 0;
+	}
+	.rider .rider-desc {
+		margin-bottom: 0.25rem;
 	}
 	.rider a {
 		color: var(--paper);
@@ -892,6 +939,21 @@
 		margin: 0;
 		font-size: 0.75rem;
 		color: var(--muted);
+	}
+	.sealed svg {
+		flex: none;
+	}
+	/* On a sent message the note sits on the bubble, so it takes the
+	   bubble's own ink instead of the page's muted grey. */
+	.q .sealed {
+		margin-top: 0.5rem;
+		color: color-mix(in srgb, currentColor 72%, transparent);
+	}
+	.picker .sealed {
+		align-items: flex-start;
+		margin: 0 0 0.25rem;
+		padding: 0 0.5rem;
+		line-height: 1.4;
 	}
 	.chips li.up {
 		background: var(--surface-2);

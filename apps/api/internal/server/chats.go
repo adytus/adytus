@@ -148,14 +148,44 @@ func (s *Server) listChats(c fiber.Ctx) error {
 }
 
 func (s *Server) modelOrDefault(id string) (llm.Model, error) {
-	if id == "" {
-		return s.LLM.Current().Catalog.Default(), nil
+	cat := s.LLM.Current().Catalog
+	if single := cat.Single(); single != "" {
+		m, _ := cat.Get(single)
+		if id != "" && id != single {
+			name := m.Name
+			if name == "" {
+				name = m.ID
+			}
+			return m, errs.Validation.New("%s is the only model available", name)
+		}
+		return m, nil
 	}
-	m, ok := s.LLM.Current().Catalog.Get(id)
+	if id == "" {
+		return cat.Default(), nil
+	}
+	m, ok := cat.Get(id)
 	if !ok {
 		return m, errs.Validation.New("model %q is not available", id)
 	}
 	return m, nil
+}
+
+// moveChat saves a new model on a chat, for single model mode moving chats
+// started before it onto the one model.
+func (s *Server) moveChat(ctx context.Context, a *authCtx, o *store.Object, meta *chatMeta, model string) error {
+	if meta.Model == model {
+		return nil
+	}
+	meta.Model = model
+	dek, err := vault.DEK(a.MK, o)
+	if err != nil {
+		return err
+	}
+	defer crypto.Zero(dek)
+	if o.Ciphertext, err = vault.Seal(dek, o.ID, *meta); err != nil {
+		return err
+	}
+	return s.Store.UpdateCiphertext(ctx, o.ID, o.Ciphertext)
 }
 
 func (s *Server) createChat(c fiber.Ctx) error {
@@ -421,6 +451,19 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	// doesn't switch providers under it.
 	snap := s.LLM.Current()
 	spec, ok := snap.Catalog.Get(meta.Model)
+	// Single model mode: every reply runs on the one model, older chats
+	// included, so move this chat onto it first. It also rescues a chat
+	// whose model was deleted.
+	if single := snap.Catalog.Single(); single != "" && meta.Model != single {
+		m, found := snap.Catalog.Get(single)
+		if !found {
+			return errs.Validation.New("%s is no longer available", single)
+		}
+		if err := s.moveChat(ctx, a, chat, &meta, m.ID); err != nil {
+			return err
+		}
+		spec, ok = m, true
+	}
 	if !ok {
 		return errs.Validation.New("this chat's model is no longer available; pick another")
 	}
@@ -480,6 +523,11 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	// everything tools saved, newest first.
 	var ws *workspace
 	system := s.Config.SystemPrompt
+	// A rebranded model introduces itself as the backoffice named it, not as
+	// whatever the provider trained it to say.
+	if spec.Identity != "" {
+		system += "\n\n" + spec.Identity
+	}
 	if opensFiles {
 		var ids []uuid.UUID
 		for _, m := range append(history, messageView{messageBody: userMsg}) {
@@ -586,7 +634,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 			return nil
 		}
 
-		_ = send("start", fiber.Map{"user_message_id": prepared.userObj.ID, "message_id": prepared.replyObj.ID, "title": meta.Title, "hold_micros": holdAmount})
+		_ = send("start", fiber.Map{"user_message_id": prepared.userObj.ID, "message_id": prepared.replyObj.ID, "title": meta.Title, "model": meta.Model, "hold_micros": holdAmount})
 
 		// A new chat is named by the model while the reply streams; the
 		// message's first words stand in until then.

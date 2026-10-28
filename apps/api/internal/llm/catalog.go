@@ -17,9 +17,16 @@ import (
 type Model struct {
 	ID string `json:"id"`
 	// Provider is the endpoint that serves the model: openrouter or ollama.
-	Provider             string  `json:"provider"`
-	Upstream             string  `json:"upstream"`
-	Name                 string  `json:"name"`
+	Provider string `json:"provider"`
+	Upstream string `json:"upstream"`
+	Name     string `json:"name"`
+	// Description is the model's own blurb for the picker. It's written in
+	// the backoffice, not taken from the provider.
+	Description string `json:"description,omitempty"`
+	// Identity is added to the system prompt, so a rebranded model
+	// introduces itself as Name and Description rather than its upstream
+	// name. Empty leaves the model as the provider made it.
+	Identity             string  `json:"identity,omitempty"`
 	PromptUSDPerMTok     float64 `json:"prompt_usd_per_mtok"`
 	CompletionUSDPerMTok float64 `json:"completion_usd_per_mtok"`
 	ContextTokens        int     `json:"context_tokens"`
@@ -59,6 +66,7 @@ type Catalog struct {
 	Models []Model `json:"models"`
 	byID   map[string]Model
 	def    string
+	single string
 }
 
 // LoadCatalog reads a catalog file. Models that don't name a provider get
@@ -126,6 +134,20 @@ func (c *Catalog) Default() Model {
 // disabled default falls back to the first model.
 func (c *Catalog) WithDefault(id string) *Catalog {
 	c.def = id
+	return c
+}
+
+// Single is the only model offered when single model mode is on, or "" when
+// it's off.
+func (c *Catalog) Single() string { return c.single }
+
+// WithSingle turns single model mode on for id. An unknown or empty id turns
+// it off, so a disabled model doesn't leave the catalog stuck on it.
+func (c *Catalog) WithSingle(id string) *Catalog {
+	c.single = ""
+	if _, ok := c.byID[id]; ok {
+		c.single = id
+	}
 	return c
 }
 

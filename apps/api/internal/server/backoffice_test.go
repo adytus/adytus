@@ -24,8 +24,11 @@ func TestBackofficeHiddenFromUsers(t *testing.T) {
 		t.Fatalf("privileges = %v, want none", privs)
 	}
 	for _, m := range e.must(200, "GET", "/api/models", nil)["models"].([]any) {
-		if _, ok := m.(map[string]any)["prompt_usd_per_mtok"]; ok {
-			t.Fatalf("non-admin saw model prices: %v", m)
+		m := m.(map[string]any)
+		for _, key := range []string{"prompt_usd_per_mtok", "completion_usd_per_mtok", "identity", "upstream", "provider"} {
+			if _, ok := m[key]; ok {
+				t.Fatalf("non-admin saw the model's %s: %v", key, m)
+			}
 		}
 	}
 	for _, path := range []string{"/api/backoffice", "/api/backoffice/users", "/api/backoffice/ui/backoffice.js"} {
@@ -135,6 +138,60 @@ func TestBackofficeProvidersAndModels(t *testing.T) {
 	}
 	e.must(400, "DELETE", "/api/backoffice/models/cheap", nil)
 	e.must(404, "PUT", "/api/backoffice/providers/nope", map[string]any{"base_url": "http://x"})
+}
+
+func TestBackofficeSingleModelAndRebrand(t *testing.T) {
+	e := newEnv(t)
+	e.signup("admin@example.com")
+	e.makeAdmin("admin@example.com")
+	e.fund()
+
+	// Rebrand cheap: users see our name and blurb, and the model is told to
+	// introduce itself that way.
+	spec := map[string]any{
+		"provider": "ollama", "upstream": "up-cheap", "name": "Adytus One",
+		"description": "Our own assistant.", "identity": "You are Adytus One.",
+		"prompt_usd_per_mtok": 1, "completion_usd_per_mtok": 2,
+		"context_tokens": 8000, "max_output_tokens": 500, "enabled": true,
+	}
+	e.must(200, "PUT", "/api/backoffice/models/cheap", spec)
+	for _, m := range e.must(200, "GET", "/api/models", nil)["models"].([]any) {
+		m := m.(map[string]any)
+		if m["id"] == "cheap" && (m["name"] != "Adytus One" || m["description"] != "Our own assistant.") {
+			t.Fatalf("rebrand not offered: %v", m)
+		}
+	}
+
+	// A chat on another model is moved onto the one model when it's sent to.
+	hands := e.must(201, "POST", "/api/chats", map[string]string{"model": "hands"})["chat"].(map[string]any)["id"].(string)
+	e.must(200, "PUT", "/api/backoffice/single", map[string]string{"model": "cheap"})
+	models := e.must(200, "GET", "/api/models", nil)
+	if len(models["models"].([]any)) != 1 || models["single"] != "cheap" || models["default"] != "cheap" {
+		t.Fatalf("single model mode offers %v", models)
+	}
+	e.must(400, "POST", "/api/chats", map[string]string{"model": "hands"})
+
+	status, events := e.sendMessage(hands, "hi")
+	if status != 200 || last(events).Name != "done" {
+		t.Fatalf("send on a moved chat: %d %+v", status, events)
+	}
+	if events[0].Name != "start" || events[0].Data["model"] != "cheap" {
+		t.Fatalf("start event: %+v", events[0])
+	}
+	if chat := e.must(200, "GET", "/api/chats/"+hands, nil)["chat"].(map[string]any); chat["model"] != "cheap" {
+		t.Fatalf("chat model = %v, want cheap", chat["model"])
+	}
+	if got := e.llm.lastMsgs[0].Content; got != "sys\n\nYou are Adytus One." {
+		t.Fatalf("system prompt = %q", got)
+	}
+
+	// Off offers the enabled models again; an unknown model is refused.
+	e.must(200, "PUT", "/api/backoffice/single", map[string]string{"model": ""})
+	models = e.must(200, "GET", "/api/models", nil)
+	if models["single"] != "" || len(models["models"].([]any)) < 2 {
+		t.Fatalf("single model mode stayed on: %v", models)
+	}
+	e.must(404, "PUT", "/api/backoffice/single", map[string]string{"model": "nope"})
 }
 
 func TestBackofficeUserUsage(t *testing.T) {

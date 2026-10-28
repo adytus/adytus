@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/static"
@@ -37,6 +38,7 @@ func (s *Server) backofficeRoutes(me fiber.Router) {
 	bo.Put("/models/:id", s.putModel)
 	bo.Delete("/models/:id", s.deleteModel)
 	bo.Put("/default", s.putDefaultModel)
+	bo.Put("/single", s.putSingleModel)
 
 	dir := s.Config.BackofficeDir
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
@@ -139,12 +141,15 @@ func (s *Server) buildLLM(ctx context.Context, q store.DBTX) (*llm.Snapshot, err
 		return nil, err
 	}
 	var models []llm.Model
-	def := ""
+	def, single := "", ""
 	for _, r := range rows {
 		if r.Enabled {
 			models = append(models, r.Spec)
 			if r.Default {
 				def = r.Spec.ID
+			}
+			if r.Single {
+				single = r.Spec.ID
 			}
 		}
 	}
@@ -160,11 +165,15 @@ func (s *Server) buildLLM(ctx context.Context, q store.DBTX) (*llm.Snapshot, err
 			}
 		}
 	}
+	// Single model mode is the default too: it's the only choice left.
+	if single != "" {
+		def = single
+	}
 	cat, err := llm.NewCatalog(models)
 	if err != nil {
 		return nil, errs.Validation.New("%s", err.Error())
 	}
-	snap, err := s.LLM.Build(ctx, cat.WithDefault(def), providers)
+	snap, err := s.LLM.Build(ctx, cat.WithDefault(def).WithSingle(single), providers)
 	if err != nil {
 		return nil, errs.Validation.New("%s", err.Error())
 	}
@@ -310,7 +319,7 @@ func (s *Server) backofficeState(c fiber.Ctx) error {
 	for _, r := range rows {
 		mv = append(mv, adminModelView{r.Spec, r.Enabled, r.Enabled && r.Spec.ID == def, r.UpdatedAt})
 	}
-	return c.JSON(fiber.Map{"providers": pv, "models": mv})
+	return c.JSON(fiber.Map{"providers": pv, "models": mv, "single": s.LLM.Current().Catalog.Single()})
 }
 
 // --- handlers ---
@@ -417,10 +426,54 @@ func (s *Server) putModel(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return err
 	}
+	if err := checkRebrand(req.Model); err != nil {
+		return err
+	}
 	req.Model.ID = id
 	by := mustAuth(c).UserID
 	return s.changeLLM(c, func(tx pgx.Tx) error {
 		return store.UpsertModel(c.Context(), tx, by, req.Model, req.Enabled)
+	})
+}
+
+// checkRebrand bounds the backoffice-written identity text, which goes into
+// every system prompt for the model.
+func checkRebrand(m llm.Model) error {
+	switch {
+	case utf8.RuneCountInString(m.Name) > 80:
+		return errs.Validation.New("names are up to 80 characters")
+	case utf8.RuneCountInString(m.Description) > 400:
+		return errs.Validation.New("descriptions are up to 400 characters")
+	case utf8.RuneCountInString(m.Identity) > 2000:
+		return errs.Validation.New("identity instructions are up to 2000 characters")
+	}
+	return nil
+}
+
+// putSingleModel turns single model mode on for a model, or off with an
+// empty id. In it users are offered that model only and every reply runs on
+// it, whatever model an older chat names.
+func (s *Server) putSingleModel(c fiber.Ctx) error {
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	return s.changeLLM(c, func(tx pgx.Tx) error {
+		if req.Model == "" {
+			return store.SetSingleModel(c.Context(), tx, "")
+		}
+		rows, err := store.Models(c.Context(), tx)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			if r.Spec.ID == req.Model && !r.Enabled {
+				return errs.Validation.New("enable %s before making it the only model", req.Model)
+			}
+		}
+		return store.SetSingleModel(c.Context(), tx, req.Model)
 	})
 }
 

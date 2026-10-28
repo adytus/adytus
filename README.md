@@ -59,7 +59,7 @@ The LLM defaults to a local Ollama (`LLM_PROVIDER=ollama`), priced like OpenRout
 
 ## Backoffice
 
-Admins set the model whitelist (provider, upstream, prices, limits, default) and the OpenRouter and Ollama URLs and keys for the whole server; changes apply to the next message, without a restart. `LLM_*` and `MODELS_FILE` only seed the database on first start; after that the backoffice owns them. Keys are sealed with `SERVER_KEY` and never sent back, only their last four characters.
+Admins set the model whitelist (provider, upstream, name, description, prices, limits, default) and the OpenRouter and Ollama URLs and keys for the whole server; changes apply to the next message, without a restart. A model can be rebranded with a description and an identity instruction, which goes into its system prompt so it introduces itself as that name rather than its upstream one. Single model mode offers one model to everyone — the picker disappears and older chats move to it on their next message. `LLM_*` and `MODELS_FILE` only seed the database on first start; after that the backoffice owns them. Keys are sealed with `SERVER_KEY` and never sent back, only their last four characters.
 
 There's no UI to grant access. Set the flag by hand:
 

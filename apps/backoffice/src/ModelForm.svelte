@@ -31,6 +31,17 @@
 		if (!out.vision) delete out.image_tokens;
 		onsave(out);
 	}
+
+	// suggestIdentity writes a starting instruction from the name and
+	// description; the backoffice can edit it.
+	function suggestIdentity() {
+		const name = m.name.trim() || m.id;
+		const desc = (m.description ?? '').trim().replace(/[.\s]+$/, '');
+		m.identity =
+			`You are ${name}${desc ? `, ${desc}` : ''}. ` +
+			`When asked who or what you are, say you are ${name}. ` +
+			`Never name another model, provider or company.`;
+	}
 </script>
 
 <form class="form" onsubmit={submit}>
@@ -102,6 +113,34 @@
 				<input type="number" bind:value={m.image_tokens} min="1" step="1" required />
 			</label>
 		{/if}
+	</fieldset>
+
+	<fieldset class="rebrand">
+		<legend>Rebrand</legend>
+		<label class="field wide">
+			Description
+			<textarea
+				bind:value={m.description}
+				rows="2"
+				maxlength="400"
+				placeholder="A line for the model picker, e.g. Fast and good with numbers"
+			></textarea>
+			<span class="hint">Shown to users instead of the provider's blurb. Leave empty for none.</span>
+		</label>
+		<label class="field wide">
+			Identity instruction
+			<textarea
+				bind:value={m.identity}
+				rows="4"
+				maxlength="2000"
+				placeholder="You are … When asked who you are, say you are …"
+			></textarea>
+			<span class="hint">
+				Added to the system prompt, so the model presents itself as this name and description rather
+				than its upstream one. Leave empty to keep the provider's identity.
+			</span>
+		</label>
+		<button class="btn" type="button" onclick={suggestIdentity}>Write it from the name</button>
 	</fieldset>
 
 	<fieldset>
@@ -192,6 +231,19 @@
 	.inline input:not([type='color']),
 	.inline select {
 		width: 9rem;
+	}
+	.rebrand {
+		display: grid;
+		gap: 0.75rem;
+	}
+	.wide {
+		width: 100%;
+	}
+	.wide textarea {
+		font: inherit;
+		width: 100%;
+		padding: 0.5rem 0.625rem;
+		resize: vertical;
 	}
 	.check {
 		display: inline-flex;

@@ -63,6 +63,8 @@
 		provider: 'openrouter',
 		upstream: '',
 		name: '',
+		description: '',
+		identity: '',
 		prompt_usd_per_mtok: 0,
 		completion_usd_per_mtok: 0,
 		context_tokens: 128000,
@@ -91,6 +93,19 @@
 		);
 	});
 	const enabledCount = $derived(st?.models.filter((m) => m.enabled).length ?? 0);
+	const enabledModels = $derived((st?.models ?? []).filter((m) => m.enabled));
+
+	// Single model mode: offer one model to everyone, or all of them again.
+	async function toggleSingle() {
+		if (!st) return;
+		if (st.single) {
+			await run('single', () => api.setSingle(''));
+			return;
+		}
+		const pick = st.models.find((m) => m.default && m.enabled) ?? enabledModels[0];
+		if (pick) await run('single', () => api.setSingle(pick.id));
+	}
+	const setSingle = (id: string) => run('single', () => api.setSingle(id));
 
 	function remove(m: AdminModel) {
 		if (!confirm(`Delete ${m.name || m.id}? Chats on it can't continue until they switch model. Disabling it is undoable.`)) return;
@@ -133,6 +148,39 @@
 		</nav>
 
 		{#if tab === 'models'}
+		<section aria-labelledby="single-h">
+			<div class="row">
+				<h2 id="single-h">Single model mode</h2>
+				<div class="single-actions">
+					{#if st.single}
+						<select
+							value={st.single}
+							disabled={busy !== ''}
+							aria-label="The model users are offered"
+							onchange={(e) => setSingle(e.currentTarget.value)}
+						>
+							{#each enabledModels as m (m.id)}<option value={m.id}>{m.name || m.id}</option>{/each}
+						</select>
+					{/if}
+					<button
+						class="switch"
+						role="switch"
+						aria-checked={st.single !== ''}
+						aria-label="Offer a single model to users"
+						title={st.single ? 'Offered alone; click to offer every enabled model' : 'Click to offer one model only'}
+						disabled={busy !== '' || enabledModels.length === 0}
+						onclick={toggleSingle}
+					>
+						<span class="knob"></span>
+					</button>
+				</div>
+			</div>
+			<p class="muted">
+				Everyone gets this one model: the picker disappears, new chats open on it and older chats
+				move to it on their next message. It's also the default. Off offers every enabled model.
+			</p>
+		</section>
+
 		<section aria-labelledby="prov-h">
 			<h2 id="prov-h">Providers</h2>
 			<p class="muted">
@@ -217,10 +265,13 @@
 								<p class="name">
 									{m.name || m.id}
 									{#if m.default}<span class="tag default">Default</span>{/if}
+									{#if st.single === m.id}<span class="tag single">Only model</span>{/if}
 									{#if !m.enabled}<span class="tag">Disabled</span>{/if}
 								</p>
+								{#if m.description}<p class="meta">{m.description}</p>{/if}
 								<p class="meta">
 									<code>{m.id}</code> → {providerName[m.provider]} <code>{m.upstream}</code>
+									{#if m.identity}· rebranded{/if}
 								</p>
 								<p class="meta">
 									{price(m.prompt_usd_per_mtok)} in · {price(m.completion_usd_per_mtok)} out ·
@@ -230,7 +281,7 @@
 								</p>
 							</div>
 							<div class="actions">
-								{#if m.enabled && !m.default}
+								{#if !st.single && m.enabled && !m.default}
 									<button class="btn" disabled={busy !== ''} onclick={() => run('default', () => api.setDefault(m.id))}>
 										Make default
 									</button>
@@ -420,6 +471,26 @@
 		border-color: var(--line-green);
 		background: var(--line-green);
 		color: var(--black);
+	}
+	.tag.single {
+		border-color: var(--line-blue);
+		background: var(--line-blue);
+		color: var(--paper);
+	}
+	.single-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.single-actions select {
+		font: inherit;
+		font-size: 0.875rem;
+		max-width: 16rem;
+		padding: 0.4rem 0.75rem;
+		border: 1px solid var(--rule);
+		border-radius: 999px;
+		background: var(--surface);
+		color: var(--paper);
 	}
 	.filter {
 		font: inherit;

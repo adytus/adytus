@@ -15,6 +15,9 @@ class AppState {
 	chats = $state<Chat[]>([]);
 	models = $state<Model[]>([]);
 	defaultModel = $state('');
+	// The only model offered when the backoffice turned single model mode
+	// on; '' otherwise.
+	singleModel = $state('');
 	// Whether the Add tokens dialog is open.
 	topUp = $state(false);
 	// Bumped by New chat, so a click while already on a new chat starts over
@@ -42,6 +45,7 @@ class AppState {
 		this.chats = newestFirst(chats);
 		this.models = models.models;
 		this.defaultModel = models.default;
+		this.singleModel = models.single;
 	}
 
 	openTopUp() {

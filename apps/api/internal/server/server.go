@@ -139,6 +139,15 @@ func (s *Server) health(c fiber.Ctx) error {
 func (s *Server) listModels(c fiber.Ctx) error {
 	cat := s.LLM.Current().Catalog
 	visible := visibleModels(cat.Models, s.ollamaActive(c.Context()))
+	// Single model mode offers that one model only, even when its endpoint
+	// is quiet: there's no other choice to fall back to. A disabled model
+	// isn't in the catalog, so the mode drops rather than the catalog.
+	single := ""
+	if id := cat.Single(); id != "" {
+		if m, ok := cat.Get(id); ok {
+			single, visible = id, []llm.Model{m}
+		}
+	}
 	def := cat.Default().ID
 	found := false
 	for _, m := range visible {
@@ -155,9 +164,9 @@ func (s *Server) listModels(c fiber.Ctx) error {
 	}
 	var models any = visible
 	if !s.isBackoffice(c) {
-		models = withoutModelPrices(visible)
+		models = withoutModelInternals(visible)
 	}
-	return c.JSON(fiber.Map{"models": models, "default": def})
+	return c.JSON(fiber.Map{"models": models, "default": def, "single": single})
 }
 
 // visibleModels drops Ollama models when its endpoint is down and puts the
@@ -200,10 +209,11 @@ func (s *Server) ollamaActive(ctx context.Context) bool {
 	return s.ollamaUp
 }
 
-// withoutModelPrices strips the per-token prices from a catalog for ordinary
-// users. They only need model names and capabilities; prices stay available
-// to the backoffice and to admins using the chat.
-func withoutModelPrices(models []llm.Model) []map[string]any {
+// withoutModelInternals strips what ordinary users don't need from a catalog:
+// the per-token prices, the identity instruction, and the upstream model and
+// provider a rebrand hides. They only need names, descriptions and
+// capabilities; the backoffice and admins using the chat keep the rest.
+func withoutModelInternals(models []llm.Model) []map[string]any {
 	out := make([]map[string]any, 0, len(models))
 	for _, m := range models {
 		raw, err := json.Marshal(m)
@@ -216,6 +226,9 @@ func withoutModelPrices(models []llm.Model) []map[string]any {
 		}
 		delete(view, "prompt_usd_per_mtok")
 		delete(view, "completion_usd_per_mtok")
+		delete(view, "identity")
+		delete(view, "upstream")
+		delete(view, "provider")
 		out = append(out, view)
 	}
 	return out

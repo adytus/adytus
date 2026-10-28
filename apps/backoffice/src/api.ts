@@ -12,6 +12,9 @@ export type AdminModel = {
 	provider: Provider['id'];
 	upstream: string;
 	name: string;
+	// Our own blurb and identity instruction, not the provider's.
+	description?: string;
+	identity?: string;
 	prompt_usd_per_mtok: number;
 	completion_usd_per_mtok: number;
 	context_tokens: number;
@@ -37,7 +40,8 @@ export type Offer = {
 	tools: boolean;
 	zdr: boolean;
 };
-export type State = { providers: Provider[]; models: AdminModel[] };
+// single is the one model offered in single model mode, or '' when it's off.
+export type State = { providers: Provider[]; models: AdminModel[]; single: string };
 export type UserUsage = {
 	id: string;
 	email: string;
@@ -117,7 +121,9 @@ export const api = {
 	offers: (id: string) => call<{ offers: Offer[] }>('GET', `/providers/${id}/offers`),
 	putModel: (m: AdminModel) => call<State>('PUT', `/models/${encodeURIComponent(m.id)}`, m),
 	deleteModel: (id: string) => call<State>('DELETE', `/models/${encodeURIComponent(id)}`),
-	setDefault: (model: string) => call<State>('PUT', '/default', { model })
+	setDefault: (model: string) => call<State>('PUT', '/default', { model }),
+	// '' turns single model mode off.
+	setSingle: (model: string) => call<State>('PUT', '/single', { model })
 };
 
 export const providerName: Record<Provider['id'], string> = { openrouter: 'OpenRouter', ollama: 'Ollama' };
