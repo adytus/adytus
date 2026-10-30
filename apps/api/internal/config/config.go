@@ -52,7 +52,9 @@ type Config struct {
 	PythonTimeout  time.Duration `env:"PYTHON_TIMEOUT" envDefault:"30s"`
 	PythonMemoryMB int           `env:"PYTHON_MEMORY_MB" envDefault:"1024"`
 	PythonParallel int           `env:"PYTHON_PARALLEL" envDefault:"2"`
-	ToolMaxSteps   int           `env:"TOOL_MAX_STEPS" envDefault:"8"`
+	ToolMaxSteps   int           `env:"TOOL_MAX_STEPS" envDefault:"25"`
+	// ReplyTimeout bounds a whole reply, every tool round included.
+	ReplyTimeout time.Duration `env:"REPLY_TIMEOUT" envDefault:"15m"`
 
 	// Crypto payments on Base. Off unless BASE_XPUB is set. The xpub is a
 	// public key: deposit addresses are derived from it, and funds are swept

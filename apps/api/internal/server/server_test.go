@@ -213,6 +213,7 @@ func newEnvWith(t *testing.T, py tools.PythonRunner) *env {
 		MaxUploadBytes: 1 << 20,
 		KDF:            crypto.KDFParams{Time: 1, MemoryKiB: 1024, Threads: 1},
 		ToolMaxSteps:   4,
+		ReplyTimeout:   time.Minute,
 	}
 	var docs *tools.Documents
 	if py != nil {

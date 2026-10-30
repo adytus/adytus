@@ -611,7 +611,7 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 	return c.SendStreamWriter(func(w *bufio.Writer) {
 		defer crypto.Zero(prepared.replyDEK)
 		defer crypto.Zero(prepared.chatDEK)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), s.Config.ReplyTimeout)
 		defer cancel()
 		if ws != nil {
 			defer ws.close()
