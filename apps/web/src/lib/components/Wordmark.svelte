@@ -9,7 +9,7 @@
 
 {#if UI_MODE === 2}
 	<span class="lockup" style:--s="{size}rem">
-		<Mark size={size * 1.15} small={size < 1.5} />
+		<Mark size={size * 1.28} small={size < 1.5} />
 		<span class="word">adytus</span>
 	</span>
 {:else}
@@ -20,12 +20,12 @@
 	.lockup {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.5em;
+		gap: 0.36em;
 		font-size: var(--s);
 	}
 	.word {
-		font-weight: 700;
-		letter-spacing: -0.03em;
+		font-weight: 580;
+		letter-spacing: -0.045em;
 		line-height: 1;
 		text-transform: lowercase;
 	}
