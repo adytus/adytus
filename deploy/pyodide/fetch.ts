@@ -55,7 +55,20 @@ const WHEELS: Record<string, string> = {
     "f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3",
 };
 
-type Lock = { packages: Record<string, { file_name: string; sha256: string; depends: string[] }> };
+// Fonts for text matplotlib and fpdf2 can't draw with their own: Noto Sans
+// for Japanese, Simplified and Traditional Chinese and Korean, which also
+// cover Latin. Variable TrueType (weights 100-900), from google/fonts at a
+// pinned commit. They're saved to <dir>/fonts, which the runner mounts
+// read-only at /opt/fonts.
+const FONTS_AT = "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/";
+const FONTS: Record<string, [string, string]> = {
+  "NotoSansJP.ttf": ["notosansjp/NotoSansJP%5Bwght%5D.ttf", "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f"],
+  "NotoSansSC.ttf": ["notosanssc/NotoSansSC%5Bwght%5D.ttf", "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da"],
+  "NotoSansTC.ttf": ["notosanstc/NotoSansTC%5Bwght%5D.ttf", "864727d210d54f2537bbe23b3a839436c3992af72de9322af5270897246bd44f"],
+  "NotoSansKR.ttf": ["notosanskr/NotoSansKR%5Bwght%5D.ttf", "194018e6b2b293a7964f037b25c0249ce1418bc9ab3c971060a03aa57861e252"],
+};
+
+type Lock ={ packages: Record<string, { file_name: string; sha256: string; depends: string[] }> };
 
 const out = Deno.args[0];
 if (!out) {
@@ -112,6 +125,11 @@ for (const [url, hash] of Object.entries(WHEELS)) {
   wheels.push(file);
 }
 
+await Deno.mkdir(`${dir}/fonts`, { recursive: true });
+for (const [name, [path, hash]] of Object.entries(FONTS)) {
+  await fetchTo(FONTS_AT + path, `${dir}/fonts/${name}`, hash);
+}
+
 // Pyodide itself unpacks the wheels, through a mount of site-packages.
 const site = `${dir}/site-packages`;
 await Deno.remove(site, { recursive: true }).catch(() => {});
@@ -125,5 +143,5 @@ for (const w of wheels) {
 }
 
 // The API checks this is here, and names the version in its logs.
-await Deno.writeTextFile(`${dir}/adytus.json`, JSON.stringify({ version: VERSION, wheels: wheels.sort() }, null, 2) + "\n");
+await Deno.writeTextFile(`${dir}/adytus.json`, JSON.stringify({ version: VERSION, wheels: wheels.sort(), fonts: Object.keys(FONTS) }, null, 2) + "\n");
 console.log(`pyodide ${VERSION}: ${wheels.length} packages in ${dir}`);

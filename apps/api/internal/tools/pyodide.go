@@ -113,6 +113,7 @@ func NewPyodide(ctx context.Context, cfg PyodideConfig) (*Pyodide, error) {
 	var manifest struct {
 		Version string   `json:"version"`
 		Wheels  []string `json:"wheels"`
+		Fonts   []string `json:"fonts"`
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "adytus.json"))
 	if err == nil {
@@ -135,6 +136,10 @@ func NewPyodide(ctx context.Context, cfg PyodideConfig) (*Pyodide, error) {
 		cfg: cfg, deno: deno, dir: dir, tmp: tmp, runner: runner,
 		slots: make(chan struct{}, max(1, cfg.Parallel)),
 		idle:  make(chan *proc, max(0, cfg.Warm)),
+		about: aboutPackages,
+	}
+	if len(manifest.Fonts) > 0 {
+		p.about += aboutFonts
 	}
 	// Check it boots before taking requests.
 	first, err := p.start()
@@ -142,7 +147,7 @@ func NewPyodide(ctx context.Context, cfg PyodideConfig) (*Pyodide, error) {
 		os.RemoveAll(tmp)
 		return nil, fmt.Errorf("python sandbox: %w", err)
 	}
-	slog.Info("python sandbox ready", "pyodide", manifest.Version, "packages", len(manifest.Wheels))
+	slog.Info("python sandbox ready", "pyodide", manifest.Version, "packages", len(manifest.Wheels), "fonts", len(manifest.Fonts))
 	if cfg.Warm == 0 {
 		first.kill()
 	} else {
@@ -155,11 +160,21 @@ func NewPyodide(ctx context.Context, cfg PyodideConfig) (*Pyodide, error) {
 	return p, nil
 }
 
-func (p *Pyodide) About() string {
-	return "Packages: numpy, scipy, pandas, matplotlib (Agg), Pillow, sympy, lxml, beautifulsoup4, pyyaml, xlrd; " +
-		"for documents python-docx, python-pptx, openpyxl, xlsxwriter, pypdf, pdfminer.six, fpdf2 and tabulate. Nothing else can be installed. " +
-		"Big packages take a few seconds to import, so import only what you use."
-}
+const aboutPackages = "Packages: numpy, scipy, pandas, matplotlib (Agg), Pillow, sympy, lxml, beautifulsoup4, pyyaml, xlrd; " +
+	"for documents python-docx, python-pptx, openpyxl, xlsxwriter, pypdf, pdfminer.six, fpdf2 and tabulate. Nothing else can be installed. " +
+	"Big packages take a few seconds to import, so import only what you use."
+
+// aboutFonts describes the fonts deploy/pyodide/fetch.ts adds, which the
+// runner mounts at /opt/fonts.
+const aboutFonts = " Fonts for Japanese, Chinese and Korean text (Latin too) are in /opt/fonts: NotoSansJP.ttf, NotoSansSC.ttf (Simplified), NotoSansTC.ttf (Traditional) and NotoSansKR.ttf, " +
+	"variable fonts whose default weight is regular. Built-in PDF fonts can't draw these scripts, so to write a PDF with them, " +
+	"don't edit content streams: build it with fpdf2, e.g. pdf.add_font(\"JP\", \"\", \"/opt/fonts/NotoSansJP.ttf\"), " +
+	"and for bold pdf.add_font(\"JP\", \"B\", \"/opt/fonts/NotoSansJP.ttf\", variations={\"wght\": 700}) (a few seconds), " +
+	"then copy the original's layout, or draw new text onto pages of the original with pypdf's merge_page " +
+	"(a white box over old text hides it but leaves it in the file; rebuild the page when it must be gone). " +
+	"For matplotlib, matplotlib.font_manager.fontManager.addfont(path) and then set rcParams[\"font.family\"] to \"Noto Sans JP\" (or SC, TC, KR)."
+
+func (p *Pyodide) About() string { return p.about }
 
 // Close stops the pool and kills idle processes.
 func (p *Pyodide) Close(context.Context) error {

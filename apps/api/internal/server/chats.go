@@ -771,8 +771,12 @@ func (s *Server) reply(ctx context.Context, mm model.ToolCallingChatModel, promp
 	go func() {
 		defer sw.Close()
 		messages := append([]*schema.Message(nil), prompt...)
-		for round := 0; round <= s.Config.ToolMaxSteps; round++ {
-			sr, err := mm.Stream(ctx, messages)
+		// Past the last round the model may not call tools: its tool results
+		// say so, and the call forbids them, so it sums up what it did
+		// instead of the reply breaking off.
+		var opts []model.Option
+		for round := 0; round <= s.Config.ToolMaxSteps+1; round++ {
+			sr, err := mm.Stream(ctx, messages, opts...)
 			if err != nil {
 				_ = sw.Send(nil, err)
 				return
@@ -808,10 +812,17 @@ func (s *Server) reply(ctx context.Context, mm model.ToolCallingChatModel, promp
 			if len(full.ToolCalls) == 0 {
 				return
 			}
-			if round == s.Config.ToolMaxSteps {
+			if round > s.Config.ToolMaxSteps {
 				break
 			}
 			messages = append(messages, full)
+			if round == s.Config.ToolMaxSteps {
+				for _, call := range full.ToolCalls {
+					messages = append(messages, schema.ToolMessage(toolsSpent, call.ID, schema.WithToolName(call.Function.Name)))
+				}
+				opts = []model.Option{model.WithToolChoice(schema.ToolChoiceForbidden)}
+				continue
+			}
 			for _, call := range full.ToolCalls {
 				result := fmt.Sprintf("error: no tool named %q", call.Function.Name)
 				if invokable, ok := byName[call.Function.Name]; ok {
@@ -829,6 +840,10 @@ func (s *Server) reply(ctx context.Context, mm model.ToolCallingChatModel, promp
 	}()
 	return out, nil
 }
+
+// toolsSpent answers the tool calls made past a reply's last tool round.
+const toolsSpent = "error: not run: this reply has used all its tool calls. Don't call tools again. " +
+	"Answer now: say what you did, what you found, and what is left, so the user can ask you to continue."
 
 // preparedReply holds the sealed user message and the reply's object and key,
 // made while the master key is still available.

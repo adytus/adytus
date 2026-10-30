@@ -26,6 +26,15 @@ const py = await loadPyodide({
 const FS = py.FS;
 FS.mkdirTree("/opt/site-packages");
 FS.mount(FS.filesystems.NODEFS, { root: `${dir}/site-packages` }, "/opt/site-packages");
+// Fonts too, when this Pyodide directory was fetched with them.
+let fonts = false;
+try {
+  fonts = Deno.statSync(`${dir}/fonts`).isDirectory;
+} catch { /* fetched before fonts were added */ }
+if (fonts) {
+  FS.mkdirTree("/opt/fonts");
+  FS.mount(FS.filesystems.NODEFS, { root: `${dir}/fonts` }, "/opt/fonts");
+}
 for (const d of ["/work/in", "/work/out"]) FS.mkdirTree(d);
 py.runPython("import sys; sys.path.insert(0, '/opt/site-packages')");
 
