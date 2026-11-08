@@ -200,3 +200,32 @@ func TestOpenRouterOffers(t *testing.T) {
 		t.Fatalf("open = %+v", got[1])
 	}
 }
+
+func TestOutputLimitShrinksToFitContext(t *testing.T) {
+	m := Model{ContextTokens: 1000, MaxOutputTokens: 300}
+	for _, c := range []struct{ prompt, want int }{{100, 300}, {900, 100}, {2000, 1}} {
+		if got := m.OutputLimit(c.prompt); got != c.want {
+			t.Errorf("OutputLimit(%d) = %d, want %d", c.prompt, got, c.want)
+		}
+	}
+}
+
+func TestTrimToolResultsDropsOldestFirst(t *testing.T) {
+	m := Model{ContextTokens: 1000, MaxOutputTokens: 100}
+	big := strings.Repeat("x", 1500)
+	old := schema.ToolMessage(big, "1")
+	msgs := []*schema.Message{schema.UserMessage("hi"), old, schema.ToolMessage(big, "2")}
+	got := TrimToolResults(m, msgs, 0)
+	if got[1].Content != trimmedToolResult || got[1].ToolCallID != "1" {
+		t.Fatalf("oldest result not trimmed: %q", got[1].Content)
+	}
+	if got[2].Content != big {
+		t.Fatal("newest result was trimmed although the prompt fits without it")
+	}
+	if old.Content != big {
+		t.Fatal("the caller's message was modified")
+	}
+	if est := m.EstimateMessages(got); est+m.MaxOutputTokens > m.ContextTokens {
+		t.Fatalf("still over the window: %d", est)
+	}
+}

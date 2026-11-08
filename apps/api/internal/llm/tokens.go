@@ -22,7 +22,7 @@ func EstimateTokens(s string) int {
 }
 
 func (m Model) messageTokens(msg *schema.Message) int {
-	n := perMessageTokens + EstimateTokens(msg.Content)
+	n := perMessageTokens + EstimateTokens(msg.Content) + EstimateTokens(msg.ReasoningContent)
 	for _, p := range msg.UserInputMultiContent {
 		switch p.Type {
 		case schema.ChatMessagePartTypeText:
@@ -58,6 +58,40 @@ func EstimateTools(tools []*schema.ToolInfo) int {
 		}
 	}
 	return n
+}
+
+// OutputLimit is the most a reply can be asked for alongside a prompt of the
+// given size. Providers reject a request whose prompt and max_tokens together
+// exceed the context window.
+func (m Model) OutputLimit(promptTokens int) int {
+	return max(1, min(m.MaxOutputTokens, m.ContextTokens-promptTokens))
+}
+
+const trimmedToolResult = "[output removed to fit the context window; run the tool again if you still need it]"
+
+// TrimToolResults blanks the oldest tool outputs until msgs fit the context
+// alongside a full-length reply, since a tool loop's prompt grows every round.
+// The messages stay so each tool call keeps its answer; msgs is not modified.
+// extra is the tokens taken by tool definitions.
+func TrimToolResults(m Model, msgs []*schema.Message, extra int) []*schema.Message {
+	over := m.EstimateMessages(msgs) + extra + m.MaxOutputTokens - m.ContextTokens
+	if over <= 0 {
+		return msgs
+	}
+	out := append([]*schema.Message(nil), msgs...)
+	for i, msg := range out {
+		if msg.Role != schema.Tool || len(msg.Content) <= len(trimmedToolResult) {
+			continue
+		}
+		cp := *msg
+		cp.Content = trimmedToolResult
+		out[i] = &cp
+		over -= EstimateTokens(msg.Content) - EstimateTokens(trimmedToolResult)
+		if over <= 0 {
+			break
+		}
+	}
+	return out
 }
 
 var ErrPromptTooLong = errors.New("message is too long for this model's context window")

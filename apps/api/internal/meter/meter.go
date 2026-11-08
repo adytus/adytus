@@ -60,7 +60,7 @@ func New(inner model.ToolCallingChatModel, ledger Ledger, userID uuid.UUID, spec
 
 func (m *Model) holdFor(msgs []*schema.Message) (est int, amount int64) {
 	est = m.spec.EstimateMessages(msgs) + m.toolTokens
-	return est, m.spec.Cost(est, m.spec.MaxOutputTokens)
+	return est, m.spec.Cost(est, m.spec.OutputLimit(est))
 }
 
 // Reserve takes the hold for the first call up front, so a request without
@@ -130,17 +130,18 @@ func (m *Model) hold(ctx context.Context, msgs []*schema.Message) (uuid.UUID, in
 
 // pin appends after the caller's options so the catalog wins: users can
 // only reach whitelisted models, with the output limit the hold covers.
-func (m *Model) pin(opts []model.Option) []model.Option {
-	return append(opts, model.WithModel(m.spec.Upstream), model.WithMaxTokens(m.spec.MaxOutputTokens))
+func (m *Model) pin(est int, opts []model.Option) []model.Option {
+	return append(opts, model.WithModel(m.spec.Upstream), model.WithMaxTokens(m.spec.OutputLimit(est)))
 }
 
 func (m *Model) Generate(ctx context.Context, in []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	in = llm.TrimToolResults(m.spec, in, m.toolTokens)
 	holdID, est, err := m.hold(ctx, in)
 	if err != nil {
 		return nil, err
 	}
 	cctx, sink := llm.WithCostSink(ctx)
-	out, err := m.inner.Generate(cctx, in, m.pin(opts)...)
+	out, err := m.inner.Generate(cctx, in, m.pin(est, opts)...)
 	var c collected
 	if out != nil {
 		c.add(out)
@@ -150,12 +151,13 @@ func (m *Model) Generate(ctx context.Context, in []*schema.Message, opts ...mode
 }
 
 func (m *Model) Stream(ctx context.Context, in []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	in = llm.TrimToolResults(m.spec, in, m.toolTokens)
 	holdID, est, err := m.hold(ctx, in)
 	if err != nil {
 		return nil, err
 	}
 	cctx, sink := llm.WithCostSink(ctx)
-	sr, err := m.inner.Stream(cctx, in, m.pin(opts)...)
+	sr, err := m.inner.Stream(cctx, in, m.pin(est, opts)...)
 	if err != nil {
 		m.release(ctx, holdID)
 		return nil, err

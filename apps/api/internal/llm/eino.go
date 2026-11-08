@@ -22,13 +22,14 @@ func NewChatModel(ctx context.Context, provider, baseURL, apiKey string) (model.
 		// Ollama ignores the key, but the client refuses to send without one.
 		apiKey = "unused"
 	}
+	// No overall client timeout: it would also cut off a long stream that is
+	// still producing. Callers bound the whole call with their context.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 5 * time.Minute
 	cfg := &openai.ChatModelConfig{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
-		HTTPClient: &http.Client{
-			Timeout:   5 * time.Minute,
-			Transport: costTransport{http.DefaultTransport},
-		},
+		BaseURL:    baseURL,
+		APIKey:     apiKey,
+		HTTPClient: &http.Client{Transport: costTransport{transport}},
 	}
 	if provider == "openrouter" {
 		// Private routing on every request: providers that collect data are
