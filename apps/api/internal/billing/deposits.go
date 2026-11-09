@@ -109,6 +109,7 @@ type DepositInfo struct {
 	MinMicros     int64          `json:"min_micros,omitempty"`
 	MinTokens     int64          `json:"min_tokens,omitempty"`
 	Quote         *Quote         `json:"quote"`
+	Voucher       *Voucher       `json:"voucher"`
 	Deposits      []DepositEntry `json:"deposits"`
 }
 
@@ -170,6 +171,10 @@ func (d *Deposits) Info(ctx context.Context, userID uuid.UUID) (DepositInfo, err
 		q.DepositAddr = addr
 		info.Quote = &q
 	case !errors.Is(err, pgx.ErrNoRows):
+		return info, err
+	}
+
+	if info.Voucher, err = d.claimed(ctx, userID); err != nil {
 		return info, err
 	}
 
@@ -387,13 +392,18 @@ func (d *Deposits) creditUSDC(ctx context.Context, byAddr map[string]uuid.UUID, 
 		micros, status = amount.Int64(), "credited"
 	}
 	return pgx.BeginFunc(ctx, d.DB, func(tx pgx.Tx) error {
+		v, err := discountFor(ctx, tx, userID)
+		if err != nil {
+			return err
+		}
+		credit := v.credit(micros)
 		var id uuid.UUID
-		err := tx.QueryRow(ctx, `
-			INSERT INTO crypto_deposits (user_id, asset, amount_atomic, credit_micros, status, tx_hash, log_index, block_number)
-			VALUES ($1, 'usdc', $2::numeric, $3, $4, $5, $6, $7)
+		err = tx.QueryRow(ctx, `
+			INSERT INTO crypto_deposits (user_id, asset, amount_atomic, credit_micros, status, tx_hash, log_index, block_number, voucher_id, bonus_micros)
+			VALUES ($1, 'usdc', $2::numeric, $3, $4, $5, $6, $7, $8, $9)
 			ON CONFLICT (tx_hash, log_index) WHERE tx_hash IS NOT NULL DO NOTHING
 			RETURNING id`,
-			userID, amount.String(), micros, status, l.TxHash, logIdx.Int64(), block.Int64()).Scan(&id)
+			userID, amount.String(), credit, status, l.TxHash, logIdx.Int64(), block.Int64(), v.id, credit-micros).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil // already handled
 		}
@@ -404,7 +414,7 @@ func (d *Deposits) creditUSDC(ctx context.Context, byAddr map[string]uuid.UUID, 
 			return nil
 		}
 		return d.Ledger.SubscribeTx(ctx, tx, userID,
-			Plan{ID: "usdc", PriceMicros: micros, CreditMicros: micros}, "base:"+l.TxHash)
+			Plan{ID: "usdc", PriceMicros: micros, CreditMicros: credit}, "base:"+l.TxHash)
 	})
 }
 
@@ -518,6 +528,11 @@ func (d *Deposits) creditETH(ctx context.Context, userID uuid.UUID, bal *big.Int
 			return nil // too small to credit yet; it keeps adding up
 		}
 		micros := credit.Int64()
+		v, err := discountFor(ctx, tx, userID)
+		if err != nil {
+			return err
+		}
+		total := v.credit(micros)
 
 		var quoteArg any
 		if hasQuote {
@@ -527,9 +542,9 @@ func (d *Deposits) creditETH(ctx context.Context, userID uuid.UUID, bal *big.Int
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO crypto_deposits (user_id, asset, amount_atomic, credit_micros, rate_micros, quote_id, status, block_number)
-			VALUES ($1, 'eth', $2::numeric, $3, $4, $5, 'credited', $6)`,
-			userID, delta.String(), micros, used, quoteArg, safe); err != nil {
+			INSERT INTO crypto_deposits (user_id, asset, amount_atomic, credit_micros, rate_micros, quote_id, status, block_number, voucher_id, bonus_micros)
+			VALUES ($1, 'eth', $2::numeric, $3, $4, $5, 'credited', $6, $7, $8)`,
+			userID, delta.String(), total, used, quoteArg, safe, v.id, total-micros); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE deposit_addresses SET eth_accounted_wei = $2::numeric WHERE user_id = $1`,
@@ -537,6 +552,6 @@ func (d *Deposits) creditETH(ctx context.Context, userID uuid.UUID, bal *big.Int
 			return err
 		}
 		return d.Ledger.SubscribeTx(ctx, tx, userID,
-			Plan{ID: "eth", PriceMicros: micros, CreditMicros: micros}, "base:eth:"+delta.String())
+			Plan{ID: "eth", PriceMicros: micros, CreditMicros: total}, "base:eth:"+delta.String())
 	})
 }

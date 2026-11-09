@@ -42,8 +42,10 @@ export type CryptoInfo = {
 	min_micros?: number;
 	min_tokens?: number;
 	quote: CryptoQuote | null;
+	voucher: CryptoVoucher | null;
 	deposits: CryptoDeposit[];
 };
+export type CryptoVoucher = { code: string; percent: number; expires_at: string };
 export type Balance = {
 	credit_micros: number;
 	held_micros: number;
@@ -197,6 +199,8 @@ export const api = {
 	cryptoInfo: () => get<CryptoInfo>('/api/billing/crypto'),
 	cryptoQuote: (usd_micros: number) =>
 		call<{ quote: CryptoQuote }>('POST', '/api/billing/crypto/quote', { usd_micros }),
+	claimVoucher: (code: string) => call<{ voucher: CryptoVoucher }>('POST', '/api/billing/voucher', { code }),
+	removeVoucher: () => call<{ voucher: null }>('DELETE', '/api/billing/voucher'),
 
 	chats: () => get<{ chats: Chat[] }>('/api/chats'),
 	createChat: (model?: string) => call<{ chat: Chat }>('POST', '/api/chats', { model }),

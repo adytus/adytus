@@ -99,6 +99,15 @@ func (s *Server) routes() {
 	me.Get("/billing/ledger", s.ledgerHistory)
 	me.Get("/billing/crypto", s.cryptoInfo)
 	me.Post("/billing/crypto/quote", s.cryptoQuote)
+	me.Post("/billing/voucher", limiter.New(limiter.Config{
+		Max:          voucherPerMinute,
+		Expiration:   time.Minute,
+		KeyGenerator: func(c fiber.Ctx) string { return mustAuth(c).UserID.String() },
+		LimitReached: func(c fiber.Ctx) error {
+			return errs.RateLimited.New("too many tries; wait a minute")
+		},
+	}), s.claimVoucher)
+	me.Delete("/billing/voucher", s.removeVoucher)
 
 	me.Get("/chats", s.listChats)
 	me.Post("/chats", s.createChat)

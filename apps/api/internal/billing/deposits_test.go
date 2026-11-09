@@ -344,6 +344,113 @@ func TestETHDepositAtLockedRate(t *testing.T) {
 	}
 }
 
+func TestVoucherCredit(t *testing.T) {
+	for _, c := range []struct{ percent, paid, want int64 }{
+		{0, 10_000_000, 10_000_000},
+		{50, 10_000_000, 20_000_000},
+		{20, 8_000_000, 10_000_000},
+		{33, 100, 149},
+	} {
+		if got := (discount{percent: c.percent}).credit(c.paid); got != c.want {
+			t.Fatalf("%d%% of %d: got %d, want %d", c.percent, c.paid, got, c.want)
+		}
+	}
+}
+
+func TestVoucherDeposits(t *testing.T) {
+	e := newDepositEnv(t)
+	ctx := context.Background()
+	e.tick(t, 1000)
+
+	if _, err := e.d.ClaimVoucher(ctx, e.user, "SOCIAL50"); err == nil {
+		t.Fatal("claimed a code that doesn't exist")
+	}
+	if err := e.d.CreateVoucher(ctx, "Social50", 50, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.CreateVoucher(ctx, "SOCIAL50", 10, time.Now().Add(time.Hour)); err == nil {
+		t.Fatal("created a duplicate code")
+	}
+	if err := e.d.CreateVoucher(ctx, "FREE", 100, time.Now().Add(time.Hour)); err == nil {
+		t.Fatal("created a 100% voucher")
+	}
+	if _, err := e.d.ClaimVoucher(ctx, e.user, " social50 "); err != nil {
+		t.Fatal(err)
+	}
+	info, err := e.d.Info(ctx, e.user)
+	if err != nil || info.Voucher == nil || info.Voucher.Percent != 50 {
+		t.Fatalf("info voucher = %+v, %v", info.Voucher, err)
+	}
+
+	// $10 of USDC is credited as $20, and the code keeps working.
+	e.chain.usdcTransfer(e.addr, 10*MicrosPerUSD, 995, "0xtx1", 0)
+	e.chain.usdcTransfer(e.addr, 5*MicrosPerUSD, 996, "0xtx2", 0)
+	e.tick(t, 1010)
+	if got := e.credit(t); got != 30*MicrosPerUSD {
+		t.Fatalf("credit = %d, want $30", got)
+	}
+
+	// A quote for the discounted $5 credits the list $10.
+	q, err := e.d.Quote(ctx, e.user, 5*MicrosPerUSD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wei, _ := new(big.Int).SetString(q.AmountWei, 10)
+	e.chain.setBalance(e.addr, wei)
+	e.tick(t, 1020)
+	if got := e.credit(t); got != 40*MicrosPerUSD {
+		t.Fatalf("credit = %d, want $40", got)
+	}
+
+	reports, err := e.d.VoucherReports(ctx)
+	if err != nil || len(reports) != 1 {
+		t.Fatalf("reports = %+v, %v", reports, err)
+	}
+	r := reports[0]
+	if r.Code != "SOCIAL50" || r.Uses != 3 || r.PaidMicros != 20*MicrosPerUSD || r.BonusMicros != 20*MicrosPerUSD {
+		t.Fatalf("report = %+v", r)
+	}
+
+	// Removed: full price again.
+	if err := e.d.RemoveVoucher(ctx, e.user); err != nil {
+		t.Fatal(err)
+	}
+	e.chain.usdcTransfer(e.addr, 5*MicrosPerUSD, 1021, "0xtx3", 0)
+	e.tick(t, 1040)
+	if got := e.credit(t); got != 45*MicrosPerUSD {
+		t.Fatalf("credit = %d, want $45", got)
+	}
+
+	// Ended: a payment on its way keeps the discount, new claims are refused.
+	if _, err := e.d.ClaimVoucher(ctx, e.user, "SOCIAL50"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.EndVoucher(ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.ClaimVoucher(ctx, e.user, "SOCIAL50"); err == nil {
+		t.Fatal("claimed an ended voucher")
+	}
+	if info, _ := e.d.Info(ctx, e.user); info.Voucher != nil {
+		t.Fatalf("ended voucher still shown: %+v", info.Voucher)
+	}
+	e.chain.usdcTransfer(e.addr, 5*MicrosPerUSD, 1041, "0xtx4", 0)
+	e.tick(t, 1060)
+	if got := e.credit(t); got != 55*MicrosPerUSD {
+		t.Fatalf("credit = %d, want $55 inside the grace period", got)
+	}
+
+	// Past the grace period the discount is gone.
+	if _, err := e.pool.Exec(ctx, `UPDATE vouchers SET expires_at = now() - interval '1 hour'`); err != nil {
+		t.Fatal(err)
+	}
+	e.chain.usdcTransfer(e.addr, 5*MicrosPerUSD, 1061, "0xtx5", 0)
+	e.tick(t, 1080)
+	if got := e.credit(t); got != 60*MicrosPerUSD {
+		t.Fatalf("credit = %d, want $60 after expiry", got)
+	}
+}
+
 func TestQuoteLimits(t *testing.T) {
 	e := newDepositEnv(t)
 	if _, err := e.d.Quote(context.Background(), e.user, MicrosPerUSD); err == nil {

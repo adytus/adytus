@@ -24,8 +24,9 @@ func RoundMicros(micros int64) int64 {
 }
 
 // Plan is a purchase that credits a user: Price is what was paid and Credit
-// what the user receives. They are equal; the margin over the upstream cost
-// lives in the catalog prices, which are set above OpenRouter's.
+// what the user receives. They are equal unless a voucher applies; the margin
+// over the upstream cost lives in the catalog prices, which are set above
+// OpenRouter's.
 type Plan struct {
 	ID           string
 	PriceMicros  int64

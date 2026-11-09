@@ -6,6 +6,7 @@
 	import ModelForm from './ModelForm.svelte';
 	import Catalog from './Catalog.svelte';
 	import Payments from './Payments.svelte';
+	import Vouchers from './Vouchers.svelte';
 
 	let st = $state<State | null>(null);
 	let error = $state('');
@@ -16,7 +17,7 @@
 	let editing = $state<AdminModel | null>(null);
 	let browsing = $state(false);
 	let filter = $state('');
-	let tab = $state<'models' | 'users' | 'payments'>('models');
+	let tab = $state<'models' | 'users' | 'payments' | 'vouchers'>('models');
 	let users = $state<UserUsage[] | null>(null);
 	let usersBusy = $state(false);
 	let usersError = $state('');
@@ -144,6 +145,9 @@
 			</button>
 			<button type="button" aria-current={tab === 'payments' ? 'page' : undefined} onclick={() => (tab = 'payments')}>
 				Payments
+			</button>
+			<button type="button" aria-current={tab === 'vouchers' ? 'page' : undefined} onclick={() => (tab = 'vouchers')}>
+				Vouchers
 			</button>
 		</nav>
 
@@ -301,6 +305,8 @@
 		</section>
 		{:else if tab === 'payments'}
 		<Payments />
+		{:else if tab === 'vouchers'}
+		<Vouchers />
 		{:else}
 		<section aria-labelledby="users-h">
 			<div class="row">

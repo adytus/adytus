@@ -1,6 +1,6 @@
 <script lang="ts">
 	import qrcode from 'qrcode-generator';
-	import { api, ApiError, tokenCount, usd, type CryptoInfo, type CryptoQuote } from '#lib/api.ts';
+	import { api, ApiError, tokenCount, usd, type CryptoInfo, type CryptoQuote, type CryptoVoucher } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
 	import Alert from '#lib/components/Alert.svelte';
 
@@ -23,13 +23,21 @@
 	let copied = $state('');
 	let added = $state(0);
 	let now = $state(Date.now());
+	let voucher = $state<CryptoVoucher | null>(null);
+	let code = $state('');
+	let voucherBusy = $state(false);
+	let voucherError = $state('');
 
 	// Deposits seen at the last poll, to spot a new credit.
 	let known: Set<string> | null = null;
 
 	const dollars = $derived(preset === 'custom' ? Number(custom) : preset);
 	const micros = $derived(Math.round(dollars * 1_000_000));
-	const minMicros = $derived(info?.min_micros ?? 0);
+	// The amount picked is the list price; a voucher lowers what is actually sent.
+	const payMicros = $derived(voucher ? Math.ceil((micros * (100 - voucher.percent)) / 100) : micros);
+	const minMicros = $derived(
+		voucher ? Math.ceil(((info?.min_micros ?? 0) * 100) / (100 - voucher.percent)) : (info?.min_micros ?? 0)
+	);
 	const validAmount = $derived(Number.isFinite(micros) && micros >= minMicros && micros <= MAX_USD * 1_000_000);
 	const tokens = $derived(validAmount ? Math.floor(micros / 1000) : 0);
 
@@ -47,6 +55,7 @@
 		stage = 'choose';
 		quote = null;
 		error = '';
+		voucherError = '';
 		added = 0;
 		known = null;
 		loadError = false;
@@ -58,6 +67,8 @@
 			const fresh = known ? r.deposits.filter((d) => d.status === 'credited' && !known!.has(d.id)) : [];
 			known = new Set(r.deposits.map((d) => d.id));
 			info = r;
+			// The price on the pay screen stays put; a late payment gets a grace period.
+			if (stage !== 'pay') voucher = r.voucher;
 			loadError = false;
 			if (fresh.length > 0) {
 				added = fresh.reduce((n, d) => n + d.credit_tokens, 0);
@@ -99,12 +110,39 @@
 		busy = true;
 		error = '';
 		try {
-			quote = (await api.cryptoQuote(micros)).quote;
+			quote = (await api.cryptoQuote(payMicros)).quote;
 			stage = 'pay';
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Could not get a price. Try again.';
 		} finally {
 			busy = false;
+		}
+	}
+
+	async function applyVoucher() {
+		if (!code.trim() || voucherBusy) return;
+		voucherBusy = true;
+		voucherError = '';
+		try {
+			voucher = (await api.claimVoucher(code)).voucher;
+			code = '';
+		} catch (err) {
+			voucherError = err instanceof ApiError ? err.message : 'Could not apply that code. Try again.';
+		} finally {
+			voucherBusy = false;
+		}
+	}
+
+	async function removeVoucher() {
+		voucherBusy = true;
+		voucherError = '';
+		try {
+			await api.removeVoucher();
+			voucher = null;
+		} catch {
+			voucherError = 'Could not remove the code. Try again.';
+		} finally {
+			voucherBusy = false;
 		}
 	}
 
@@ -207,13 +245,48 @@
 							</span>
 						</label>
 					{/if}
-					<p class="total">
-						{#if validAmount}
-							<strong>{tokenCount(tokens)}</strong> tokens
+					<div class="totals">
+						<p class="total">
+							{#if validAmount}
+								<strong>{tokenCount(tokens)}</strong> tokens
+							{:else}
+								Minimum {usd(minMicros, minMicros % 1_000_000 ? 2 : 0)}
+							{/if}
+						</p>
+						{#if voucher}
+							<span class="applied">
+								<strong>{voucher.code}</strong>
+								<button type="button" aria-label="Remove voucher {voucher.code}" disabled={voucherBusy} onclick={removeVoucher}>×</button>
+							</span>
 						{:else}
-							Minimum {usd(minMicros, 0)}
+							<span class="voucher">
+								<input
+									aria-label="Voucher code"
+									placeholder="Voucher code"
+									autocapitalize="characters"
+									autocomplete="off"
+									spellcheck="false"
+									maxlength="32"
+									bind:value={code}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											applyVoucher();
+										}
+									}}
+								/>
+								<button class="btn" type="button" disabled={!code.trim() || voucherBusy} onclick={applyVoucher}>Apply</button>
+							</span>
 						{/if}
-					</p>
+					</div>
+					{#if voucher && validAmount}
+						<p class="price">
+							<s>{usd(micros)}</s>
+							<strong>{usd(payMicros)}</strong>
+							<span>{voucher.percent}% off</span>
+						</p>
+					{/if}
+					{#if voucherError}<p class="bad" role="alert">{voucherError}</p>{/if}
 				</fieldset>
 
 				<fieldset>
@@ -241,7 +314,7 @@
 				</div>
 
 				{#if asset === 'usdc'}
-					<p class="step">Send <strong>{dollars.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC</strong> on the <strong>Base</strong> network to:</p>
+					<p class="step">Send <strong>{(payMicros / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC</strong> on the <strong>Base</strong> network to:</p>
 					<div class="card">
 						<div class="qr" aria-hidden="true">{@html qrSvg(info.address!)}</div>
 						<div class="where">
@@ -251,7 +324,7 @@
 							</button>
 						</div>
 					</div>
-					<p class="note">Any amount over {usd(minMicros, 0)} works, so it needn't match exactly. Other tokens or networks sent here can't be recovered automatically.</p>
+					<p class="note">Any amount over {usd(info.min_micros ?? 0, 0)} works, so it needn't match exactly. Other tokens or networks sent here can't be recovered automatically.</p>
 				{:else if quote}
 					<p class="step">Send <strong>{ethText(quote.amount_wei)} ETH</strong> on the <strong>Base</strong> network to:</p>
 					<div class="card" class:stale={expired}>
@@ -432,6 +505,72 @@
 		font-size: 1.375rem;
 		color: var(--ink);
 		font-variant-numeric: tabular-nums;
+	}
+	.totals {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.5rem 0.75rem;
+	}
+	.voucher {
+		display: flex;
+		gap: 0.375rem;
+		min-width: 0;
+	}
+	.voucher input {
+		width: 8rem;
+		min-width: 0;
+		padding: 0.5rem 0.625rem;
+		font: inherit;
+		font-size: 0.875rem;
+	}
+	.voucher input:not(:placeholder-shown) {
+		text-transform: uppercase;
+	}
+	.applied {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.25rem 0.25rem 0.25rem 0.75rem;
+		border: 1px solid var(--teal);
+		border-radius: 999px;
+		background: var(--mist);
+		font-size: 0.875rem;
+	}
+	.applied button {
+		width: 1.5rem;
+		height: 1.5rem;
+		border: 0;
+		border-radius: 50%;
+		background: transparent;
+		color: var(--text-soft);
+		font-size: 1.125rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.price {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		margin: 0;
+		font-variant-numeric: tabular-nums;
+	}
+	.price s {
+		color: var(--muted);
+	}
+	.price strong {
+		font-size: 1.125rem;
+	}
+	.price span {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--teal);
+	}
+	.bad {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--line-red);
 	}
 	.seg {
 		display: grid;

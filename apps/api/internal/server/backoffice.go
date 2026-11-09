@@ -32,6 +32,9 @@ func (s *Server) backofficeRoutes(me fiber.Router) {
 	bo.Get("", s.backofficeState)
 	bo.Get("/users", s.backofficeUsers)
 	bo.Get("/crypto", s.backofficeCrypto)
+	bo.Get("/vouchers", s.backofficeVouchers)
+	bo.Post("/vouchers", s.createVoucher)
+	bo.Post("/vouchers/:id/end", s.endVoucher)
 	bo.Put("/providers/:id", s.putProvider)
 	bo.Post("/providers/:id/test", s.testProvider)
 	bo.Get("/providers/:id/offers", s.providerOffers)
@@ -522,4 +525,48 @@ func (s *Server) backofficeCrypto(c fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(o)
+}
+
+// backofficeVouchers lists the discount codes and what each has cost.
+func (s *Server) backofficeVouchers(c fiber.Ctx) error {
+	if s.Deposits == nil {
+		return c.JSON(fiber.Map{"enabled": false, "vouchers": []billing.VoucherReport{}})
+	}
+	v, err := s.Deposits.VoucherReports(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"enabled": true, "vouchers": v})
+}
+
+func (s *Server) createVoucher(c fiber.Ctx) error {
+	if s.Deposits == nil {
+		return errs.NotFound.New("crypto payments are not enabled")
+	}
+	var req struct {
+		Code      string    `json:"code" validate:"required,max=64"`
+		Percent   int64     `json:"percent" validate:"required"`
+		ExpiresAt time.Time `json:"expires_at" validate:"required"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	if err := s.Deposits.CreateVoucher(c.Context(), req.Code, req.Percent, req.ExpiresAt); err != nil {
+		return err
+	}
+	return s.backofficeVouchers(c)
+}
+
+func (s *Server) endVoucher(c fiber.Ctx) error {
+	if s.Deposits == nil {
+		return errs.NotFound.New("crypto payments are not enabled")
+	}
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return errs.NotFound.New("no voucher with that id")
+	}
+	if err := s.Deposits.EndVoucher(c.Context(), id); err != nil {
+		return err
+	}
+	return s.backofficeVouchers(c)
 }

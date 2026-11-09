@@ -109,8 +109,24 @@ export type CryptoOverview = {
 	};
 };
 
+export type Voucher = {
+	id: string;
+	code: string;
+	percent: number;
+	expires_at: string;
+	created_at: string;
+	uses: number;
+	paid_micros: number;
+	bonus_micros: number;
+};
+export type VoucherList = { enabled: boolean; vouchers: Voucher[] };
+
 export const api = {
 	state: () => call<State>('GET', ''),
+	vouchers: () => call<VoucherList>('GET', '/vouchers'),
+	createVoucher: (code: string, percent: number, expires_at: string) =>
+		call<VoucherList>('POST', '/vouchers', { code, percent, expires_at }),
+	endVoucher: (id: string) => call<VoucherList>('POST', `/vouchers/${id}/end`),
 	users: () => call<{ users: UserUsage[] }>('GET', '/users'),
 	crypto: () => call<CryptoOverview>('GET', '/crypto'),
 	// api_key: undefined keeps the saved key, '' clears it.
