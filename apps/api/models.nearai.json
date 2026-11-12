@@ -1,0 +1,46 @@
+{
+  "models": [
+    {
+      "id": "deepseek-v4.1-flash",
+      "provider": "nearai",
+      "upstream": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "name": "DeepSeek V4.1 Flash",
+      "prompt_usd_per_mtok": 0.3,
+      "completion_usd_per_mtok": 1.2,
+      "context_tokens": 1048576,
+      "max_output_tokens": 16384,
+      "vision": true,
+      "image_tokens": 1500,
+      "tools": true,
+      "icon": { "code": "DS", "color": "#1e5bff", "shape": "circle" }
+    },
+    {
+      "id": "qwen3.8-27b",
+      "provider": "nearai",
+      "upstream": "Qwen/Qwen3.8-27B",
+      "name": "Qwen3.8 27B",
+      "prompt_usd_per_mtok": 0.04,
+      "completion_usd_per_mtok": 1.35,
+      "context_tokens": 262144,
+      "max_output_tokens": 16384,
+      "vision": true,
+      "image_tokens": 1500,
+      "tools": true,
+      "icon": { "code": "Q3", "color": "#7b4bd6", "shape": "hexagon" }
+    },
+    {
+      "id": "glm-5.3-flash",
+      "provider": "nearai",
+      "upstream": "z-ai/glm-5.3-flash",
+      "name": "GLM-5.3 Flash",
+      "prompt_usd_per_mtok": 0.08,
+      "completion_usd_per_mtok": 0.5,
+      "context_tokens": 1048576,
+      "max_output_tokens": 16384,
+      "vision": true,
+      "image_tokens": 1500,
+      "tools": true,
+      "icon": { "code": "GL", "color": "#2fbf71", "shape": "square" }
+    }
+  ]
+}

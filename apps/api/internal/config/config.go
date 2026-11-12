@@ -19,10 +19,11 @@ type Config struct {
 	ServerKeyB64 string `env:"SERVER_KEY,required"`
 	ServerKey    []byte `env:"-"`
 
-	// LLMProvider is "openrouter" or "ollama". These and MODELS_FILE only
-	// seed the database on first start; the backoffice owns them after.
+	// LLMProvider is "openrouter", "ollama" or "nearai". These and
+	// MODELS_FILE only seed the database on first start; the backoffice owns
+	// them after. An empty LLM_BASE_URL means the provider's usual one.
 	LLMProvider  string `env:"LLM_PROVIDER" envDefault:"ollama"`
-	LLMBaseURL   string `env:"LLM_BASE_URL" envDefault:"http://localhost:11434/v1"`
+	LLMBaseURL   string `env:"LLM_BASE_URL"`
 	LLMAPIKey    string `env:"LLM_API_KEY"`
 	ModelsFile   string `env:"MODELS_FILE" envDefault:"models.ollama.json"`
 	SystemPrompt string `env:"SYSTEM_PROMPT" envDefault:"You are Adytus, a concise and helpful assistant."`
@@ -92,8 +93,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("SERVER_KEY must be 32 bytes, base64 encoded")
 	}
 	c.ServerKey = key
-	if c.LLMProvider != "openrouter" && c.LLMProvider != "ollama" {
-		return nil, fmt.Errorf("LLM_PROVIDER must be openrouter or ollama, got %q", c.LLMProvider)
+	switch c.LLMProvider {
+	case "openrouter", "ollama", "nearai":
+	default:
+		return nil, fmt.Errorf("LLM_PROVIDER must be openrouter, ollama or nearai, got %q", c.LLMProvider)
 	}
 	if c.BaseXPub != "" {
 		if c.BaseRPCURL == "" {

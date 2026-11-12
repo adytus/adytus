@@ -16,7 +16,8 @@ import (
 // so budgeting behaves exactly as it would against OpenRouter.
 type Model struct {
 	ID string `json:"id"`
-	// Provider is the endpoint that serves the model: openrouter or ollama.
+	// Provider is the endpoint that serves the model: openrouter, ollama or
+	// nearai.
 	Provider string `json:"provider"`
 	Upstream string `json:"upstream"`
 	Name     string `json:"name"`
@@ -98,7 +99,7 @@ func NewCatalog(models []Model) (*Catalog, error) {
 		case m.ID == "" || m.Upstream == "":
 			return nil, fmt.Errorf("model catalog: id and upstream are required")
 		case !IsProvider(m.Provider):
-			return nil, fmt.Errorf("model catalog: %s: provider must be openrouter or ollama", m.ID)
+			return nil, fmt.Errorf("model catalog: %s: provider must be one of %s", m.ID, strings.Join(Providers, ", "))
 		case m.ContextTokens <= 0 || m.MaxOutputTokens <= 0 || m.MaxOutputTokens >= m.ContextTokens:
 			return nil, fmt.Errorf("model catalog: %s: need 0 < max_output_tokens < context_tokens", m.ID)
 		case m.PromptUSDPerMTok < 0 || m.CompletionUSDPerMTok < 0:

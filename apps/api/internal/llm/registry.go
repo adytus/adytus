@@ -12,19 +12,27 @@ import (
 const (
 	OpenRouter = "openrouter"
 	Ollama     = "ollama"
+	// NearAI is NEAR AI Cloud. Its open-weight models run in TEEs (Intel TDX
+	// and NVIDIA confidential computing) and can be attested; the rest are
+	// proxied to their vendors.
+	NearAI = "nearai"
 )
 
 // Providers are the upstream endpoints a model can be served by.
-var Providers = []string{OpenRouter, Ollama}
+var Providers = []string{OpenRouter, Ollama, NearAI}
 
 // DefaultBaseURL is where a provider is reached unless the backoffice or
 // the environment says otherwise.
 var DefaultBaseURL = map[string]string{
 	OpenRouter: "https://openrouter.ai/api/v1",
 	Ollama:     "http://localhost:11434/v1",
+	NearAI:     "https://cloud-api.near.ai/v1",
 }
 
 func IsProvider(id string) bool { return slices.Contains(Providers, id) }
+
+// NeedsKey reports whether a provider refuses requests without an API key.
+func NeedsKey(id string) bool { return id != Ollama }
 
 // Provider is an upstream endpoint and its key.
 type Provider struct {
@@ -93,7 +101,7 @@ func (r *Registry) Build(ctx context.Context, c *Catalog, providers []Provider) 
 		switch {
 		case !ok || p.BaseURL == "":
 			return nil, fmt.Errorf("%s needs %s, which has no base URL", m.ID, m.Provider)
-		case p.ID == OpenRouter && p.APIKey == "":
+		case NeedsKey(p.ID) && p.APIKey == "":
 			return nil, fmt.Errorf("%s needs %s, which has no API key", m.ID, m.Provider)
 		}
 		cm, err := r.dial(ctx, p)

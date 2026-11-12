@@ -16,9 +16,14 @@ var probeClient = &http.Client{Timeout: 15 * time.Second}
 // upstream model names it offers.
 func Probe(ctx context.Context, p Provider) ([]string, error) {
 	base := strings.TrimRight(p.BaseURL, "/")
-	if p.ID == OpenRouter {
-		// /models answers without a key, so check the key on its own.
+	// /models answers without a key on both, so check the key on its own.
+	switch p.ID {
+	case OpenRouter:
 		if err := probeGet(ctx, base+"/key", p.APIKey, nil); err != nil {
+			return nil, err
+		}
+	case NearAI:
+		if err := probeNearKey(ctx, base, p.APIKey); err != nil {
 			return nil, err
 		}
 	}
@@ -36,6 +41,34 @@ func Probe(ctx context.Context, p Provider) ([]string, error) {
 	}
 	sort.Strings(ids)
 	return ids, nil
+}
+
+// probeNearKey checks a NEAR AI Cloud key without running a model: an empty
+// chat request is refused with 401 before validation when the key is bad,
+// and as invalid (never billed) when it's good.
+func probeNearKey(ctx context.Context, base, key string) error {
+	if key == "" {
+		return fmt.Errorf("NEAR AI needs an API key")
+	}
+	url := base + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := probeClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("can't reach %s: %w", url, err)
+	}
+	resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("%s rejected the API key (%d)", url, resp.StatusCode)
+	case resp.StatusCode >= 500:
+		return fmt.Errorf("%s answered %d", url, resp.StatusCode)
+	}
+	return nil
 }
 
 func probeGet(ctx context.Context, url, key string, out any) error {

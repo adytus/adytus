@@ -20,6 +20,7 @@
 	let error = $state('');
 	let query = $state('');
 	let zdrOnly = $state(true);
+	let privateOnly = $state(true);
 	let toolsOnly = $state(false);
 	let visionOnly = $state(false);
 	let freeOnly = $state(false);
@@ -37,7 +38,7 @@
 
 	// Reset paging when the filter changes.
 	$effect(() => {
-		void [provider, query, zdrOnly, toolsOnly, visionOnly, freeOnly];
+		void [provider, query, zdrOnly, privateOnly, toolsOnly, visionOnly, freeOnly];
 		shown = PAGE;
 	});
 
@@ -49,7 +50,8 @@
 		return (offers[provider] ?? [])
 			.map((o, i) => ({ o, rank: i + 1 }))
 			.filter(({ o }) => {
-				if (zdrOnly && !o.zdr) return false;
+				if (provider === 'openrouter' && zdrOnly && !o.zdr) return false;
+				if (provider === 'nearai' && privateOnly && !o.verifiable) return false;
 				if (toolsOnly && !o.tools) return false;
 				if (visionOnly && !o.vision) return false;
 				if (freeOnly && (o.prompt_usd_per_mtok > 0 || o.completion_usd_per_mtok > 0)) return false;
@@ -137,11 +139,17 @@
 		spellcheck="false"
 	/>
 
-	{#if provider === 'openrouter'}
+	{#if provider !== 'ollama'}
 		<div class="filters">
-			<label class="chip" class:on={zdrOnly}
-				><input type="checkbox" bind:checked={zdrOnly} /> Zero data retention</label
-			>
+			{#if provider === 'openrouter'}
+				<label class="chip" class:on={zdrOnly}
+					><input type="checkbox" bind:checked={zdrOnly} /> Zero data retention</label
+				>
+			{:else}
+				<label class="chip" class:on={privateOnly}
+					><input type="checkbox" bind:checked={privateOnly} /> Private inference (TEE)</label
+				>
+			{/if}
 			<label class="chip" class:on={toolsOnly}><input type="checkbox" bind:checked={toolsOnly} /> Tools</label>
 			<label class="chip" class:on={visionOnly}><input type="checkbox" bind:checked={visionOnly} /> Vision</label>
 			<label class="chip" class:on={freeOnly}><input type="checkbox" bind:checked={freeOnly} /> Free</label>
@@ -156,7 +164,9 @@
 		<p class="muted count">
 			{matches.length} model{matches.length === 1 ? '' : 's'}{provider === 'openrouter'
 				? ', most used this week first'
-				: ''}. Prices are per million tokens{provider === 'openrouter'
+				: provider === 'nearai'
+					? ', private ones first'
+					: ''}. Prices are per million tokens{provider === 'openrouter'
 				? ' at the cheapest zero-data-retention endpoint'
 				: ''}; you can edit them after adding.
 		</p>
@@ -164,7 +174,7 @@
 			{#each matches.slice(0, shown) as { o, rank } (o.upstream)}
 				{@const m = toModel(o)}
 				{@const have = added.has(o.upstream)}
-				<li class:dim={!o.zdr}>
+				<li class:dim={!o.zdr || (provider === 'nearai' && !o.verifiable)}>
 					{#if provider === 'openrouter'}<span class="rank">{rank}</span>{/if}
 					<ModelIcon icon={m.icon} size={1.75} />
 					<div class="about">
@@ -173,9 +183,15 @@
 							{#if o.vision}<span class="tag">vision</span>{/if}
 							{#if o.tools}<span class="tag">tools</span>{/if}
 							{#if !o.zdr}<span class="tag warn">no ZDR</span>{/if}
+							{#if provider === 'nearai'}
+								{#if o.verifiable}<span class="tag">private</span>{:else}<span
+										class="tag warn"
+										title="Proxied to its vendor, not run in a TEE">not private</span
+									>{/if}
+							{/if}
 						</p>
 						<p class="meta"><code>{o.upstream}</code></p>
-						{#if provider === 'openrouter'}
+						{#if provider !== 'ollama'}
 							<p class="meta">
 								{price(o.prompt_usd_per_mtok)} in · {price(o.completion_usd_per_mtok)} out · {tokens(o.context_tokens)}
 								context

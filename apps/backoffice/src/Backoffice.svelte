@@ -188,8 +188,10 @@
 		<section aria-labelledby="prov-h">
 			<h2 id="prov-h">Providers</h2>
 			<p class="muted">
-				Keys are sealed with the server key and never sent back; only their last four characters are
-				shown. Every OpenRouter request is restricted to zero-data-retention providers.
+				Pick each provider's endpoint from the list or enter a custom URL. Keys are sealed with the
+				server key and never sent back; only their last four characters are shown. Every OpenRouter
+				request is restricted to zero-data-retention providers; NEAR AI's private models run inside
+				TEEs, so not even the host can read prompts.
 			</p>
 			<div class="providers">
 				{#each st.providers as p (p.id)}

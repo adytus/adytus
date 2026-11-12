@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { api, providerName, type Provider } from './api.ts';
+	import { api, endpoints, providerName, type Provider } from './api.ts';
 
 	let {
 		provider,
@@ -15,7 +15,12 @@
 		ontested: (ids: string[]) => void;
 	} = $props();
 
+	const CUSTOM = 'custom';
+	const known = $derived(endpoints[provider.id] ?? []);
+
 	let baseURL = $state('');
+	// The picked endpoint's URL, or CUSTOM when the URL is typed in.
+	let choice = $state('');
 	let key = $state('');
 	let test = $state<{ ok: boolean; text: string } | null>(null);
 	let testing = $state(false);
@@ -23,7 +28,13 @@
 	// Follow the saved URL until the admin edits it.
 	$effect.pre(() => {
 		baseURL = provider.base_url;
+		choice = known.some((e) => e.url === provider.base_url) ? provider.base_url : CUSTOM;
 	});
+
+	function pick(value: string) {
+		choice = value;
+		if (value !== CUSTOM) baseURL = value;
+	}
 
 	const dirty = $derived(baseURL !== provider.base_url || key !== '');
 
@@ -60,9 +71,19 @@
 	</div>
 
 	<label class="field">
-		Base URL
-		<input type="url" required bind:value={baseURL} autocomplete="off" spellcheck="false" />
+		Endpoint
+		<select value={choice} onchange={(e) => pick(e.currentTarget.value)}>
+			{#each known as e (e.url)}<option value={e.url}>{e.label} — {e.url}</option>{/each}
+			<option value={CUSTOM}>Custom URL…</option>
+		</select>
 	</label>
+
+	{#if choice === CUSTOM}
+		<label class="field">
+			Base URL
+			<input type="url" required bind:value={baseURL} autocomplete="off" spellcheck="false" placeholder="https://…/v1" />
+		</label>
+	{/if}
 
 	<label class="field">
 		API key
@@ -77,7 +98,9 @@
 					: 'Saved. Type to replace.'
 				: provider.id === 'ollama'
 					? 'Optional; only for an Ollama behind a proxy'
-					: 'Not set'}
+					: provider.id === 'nearai'
+						? 'Not set; create one at cloud.near.ai'
+						: 'Not set'}
 		/>
 	</label>
 
@@ -122,7 +145,8 @@
 		font-size: 0.8125rem;
 		color: var(--muted);
 	}
-	.field input {
+	.field input,
+	.field select {
 		width: 100%;
 	}
 	.test {

@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -23,6 +24,9 @@ type Offer struct {
 	// ZDR is whether a zero-data-retention endpoint serves it. Every
 	// OpenRouter request is restricted to those, so others won't answer.
 	ZDR bool `json:"zdr"`
+	// Verifiable is NEAR AI's flag for models served from a TEE that can be
+	// attested. Its other models are proxied to their vendors.
+	Verifiable bool `json:"verifiable"`
 }
 
 // Offers lists the models a provider serves. OpenRouter's come most used
@@ -30,6 +34,9 @@ type Offer struct {
 // Neither needs the key.
 func Offers(ctx context.Context, p Provider) ([]Offer, error) {
 	base := strings.TrimRight(p.BaseURL, "/")
+	if p.ID == NearAI {
+		return nearOffers(ctx, base, p.APIKey)
+	}
 	if p.ID != OpenRouter {
 		var list struct {
 			Data []struct {
@@ -118,6 +125,76 @@ func Offers(ctx context.Context, p Provider) ([]Offer, error) {
 		}
 		out = append(out, o)
 	}
+	return out, nil
+}
+
+// nearOffers lists NEAR AI Cloud's chat models from /model/list, which
+// carries prices and the verifiable (TEE) flag. Private ones come first.
+func nearOffers(ctx context.Context, base, key string) ([]Offer, error) {
+	type amount struct {
+		Amount int64 `json:"amount"`
+		Scale  int   `json:"scale"`
+	}
+	var list struct {
+		Models []struct {
+			ModelID  string `json:"modelId"`
+			Input    amount `json:"inputCostPerToken"`
+			Output   amount `json:"outputCostPerToken"`
+			Metadata struct {
+				Verifiable    bool   `json:"verifiable"`
+				ContextLength int    `json:"contextLength"`
+				MaxOutput     int    `json:"maxOutputLength"`
+				DisplayName   string `json:"modelDisplayName"`
+				Description   string `json:"modelDescription"`
+				Architecture  struct {
+					Input  []string `json:"inputModalities"`
+					Output []string `json:"outputModalities"`
+				} `json:"architecture"`
+				Features []string `json:"supportedFeatures"`
+			} `json:"metadata"`
+		} `json:"models"`
+	}
+	if err := probeGet(ctx, base+"/model/list", key, &list); err != nil {
+		return nil, err
+	}
+	perM := func(a amount) float64 {
+		return math.Round(float64(a.Amount)/math.Pow10(a.Scale)*1e12) / 1e6
+	}
+	out := make([]Offer, 0, len(list.Models))
+	for _, m := range list.Models {
+		md := m.Metadata
+		// Chat models only: text in, text out (no embeddings, images, audio).
+		if !slices.Contains(md.Architecture.Input, "text") || !slices.Equal(md.Architecture.Output, []string{"text"}) {
+			continue
+		}
+		name := md.DisplayName
+		if name == "" {
+			name = m.ModelID
+		}
+		out = append(out, Offer{
+			Upstream:             m.ModelID,
+			Name:                 name,
+			Description:          summary(md.Description),
+			PromptUSDPerMTok:     perM(m.Input),
+			CompletionUSDPerMTok: perM(m.Output),
+			ContextTokens:        md.ContextLength,
+			MaxOutputTokens:      md.MaxOutput,
+			Vision:               slices.Contains(md.Architecture.Input, "image"),
+			Tools:                slices.Contains(md.Features, "tools"),
+			// No routing restriction is sent, so every model answers.
+			ZDR:        true,
+			Verifiable: md.Verifiable,
+		})
+	}
+	slices.SortStableFunc(out, func(a, b Offer) int {
+		switch {
+		case a.Verifiable == b.Verifiable:
+			return 0
+		case a.Verifiable:
+			return -1
+		}
+		return 1
+	})
 	return out, nil
 }
 

@@ -1,7 +1,7 @@
 import type { ModelIcon } from '../../web/src/lib/api.ts';
 
 export type Provider = {
-	id: 'openrouter' | 'ollama';
+	id: 'openrouter' | 'ollama' | 'nearai';
 	base_url: string;
 	key_set: boolean;
 	key_hint: string;
@@ -39,6 +39,8 @@ export type Offer = {
 	vision: boolean;
 	tools: boolean;
 	zdr: boolean;
+	// NEAR AI only: served from an attestable TEE rather than proxied to the vendor.
+	verifiable: boolean;
 };
 // single is the one model offered in single model mode, or '' when it's off.
 export type State = { providers: Provider[]; models: AdminModel[]; single: string };
@@ -142,4 +144,20 @@ export const api = {
 	setSingle: (model: string) => call<State>('PUT', '/single', { model })
 };
 
-export const providerName: Record<Provider['id'], string> = { openrouter: 'OpenRouter', ollama: 'Ollama' };
+export const providerName: Record<Provider['id'], string> = {
+	openrouter: 'OpenRouter',
+	ollama: 'Ollama',
+	nearai: 'NEAR AI'
+};
+
+// Known endpoints for each provider, picked from a list in its card. Any
+// other URL can still be typed in as a custom one.
+export type Endpoint = { label: string; url: string };
+export const endpoints: Record<Provider['id'], Endpoint[]> = {
+	openrouter: [{ label: 'OpenRouter', url: 'https://openrouter.ai/api/v1' }],
+	ollama: [
+		{ label: 'This machine', url: 'http://localhost:11434/v1' },
+		{ label: 'Docker Compose service', url: 'http://ollama:11434/v1' }
+	],
+	nearai: [{ label: 'NEAR AI Cloud (private inference)', url: 'https://cloud-api.near.ai/v1' }]
+};
