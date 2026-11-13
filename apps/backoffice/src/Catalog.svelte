@@ -105,6 +105,7 @@
 			vision: o.vision,
 			...(o.vision ? { image_tokens: 1500 } : {}),
 			tools: o.tools,
+			...(provider === 'nearai' && o.verifiable ? { private_inference: true } : {}),
 			icon: { code, color: colors[hash(vendor) % colors.length], shape: shapes[hash(o.upstream) % shapes.length] },
 			enabled: true,
 			default: false

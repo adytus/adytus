@@ -12,6 +12,7 @@
       "vision": true,
       "image_tokens": 1500,
       "tools": true,
+      "private_inference": true,
       "icon": { "code": "DS", "color": "#1e5bff", "shape": "circle" }
     },
     {
@@ -26,6 +27,7 @@
       "vision": true,
       "image_tokens": 1500,
       "tools": true,
+      "private_inference": true,
       "icon": { "code": "Q3", "color": "#7b4bd6", "shape": "hexagon" }
     },
     {
@@ -40,6 +42,7 @@
       "vision": true,
       "image_tokens": 1500,
       "tools": true,
+      "private_inference": true,
       "icon": { "code": "GL", "color": "#2fbf71", "shape": "square" }
     }
   ]

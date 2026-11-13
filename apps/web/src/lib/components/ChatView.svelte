@@ -462,7 +462,14 @@
 							</div>
 						</div>
 					{/if}
-					<p class="muted small">Messages and files are encrypted before they're stored in Adytus.</p>
+					<p class="muted small">
+						Messages and files are encrypted before they're stored in Adytus.
+						{#if model?.private_inference}
+							This model runs privately on <a href="https://near.ai/" target="_blank" rel="noopener noreferrer"
+								>NEAR AI</a
+							>, inside a sealed enclave that no one can see into.
+						{/if}
+					</p>
 				</div>
 			{/if}
 
@@ -757,6 +764,11 @@
 	.small {
 		font-size: 0.8125rem;
 		margin-top: 1.5rem;
+	}
+	.small a {
+		color: inherit;
+		text-decoration: underline;
+		text-underline-offset: 2px;
 	}
 	.who {
 		display: inline-flex;

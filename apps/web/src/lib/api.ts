@@ -11,6 +11,8 @@ export type Model = {
 	max_output_tokens: number;
 	vision: boolean;
 	tools: boolean;
+	// Served by NEAR AI from a sealed enclave (TEE).
+	private_inference?: boolean;
 	icon: ModelIcon;
 };
 export type ModelIcon = { code: string; color: string; shape: 'circle' | 'square' | 'diamond' | 'hexagon' };

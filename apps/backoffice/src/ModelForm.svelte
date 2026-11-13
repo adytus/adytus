@@ -29,6 +29,7 @@
 		e.preventDefault();
 		const out = $state.snapshot(m);
 		if (!out.vision) delete out.image_tokens;
+		if (out.provider !== 'nearai' || !out.private_inference) delete out.private_inference;
 		onsave(out);
 	}
 
@@ -112,6 +113,11 @@
 				Tokens held per image
 				<input type="number" bind:value={m.image_tokens} min="1" step="1" required />
 			</label>
+		{/if}
+		{#if m.provider === 'nearai'}
+			<label class="check"
+				><input type="checkbox" bind:checked={m.private_inference} /> Private inference (runs in a TEE; tells users in the chat)</label
+			>
 		{/if}
 	</fieldset>
 

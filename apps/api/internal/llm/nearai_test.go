@@ -95,3 +95,14 @@ func TestNearAINeedsKey(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPrivateInferenceIsNearAIOnly(t *testing.T) {
+	m := Model{ID: "p", Provider: NearAI, Upstream: "Qwen/Private", ContextTokens: 100, MaxOutputTokens: 10, PrivateInference: true}
+	if _, err := NewCatalog([]Model{m}); err != nil {
+		t.Fatalf("NEAR AI model with private inference: %v", err)
+	}
+	m.Provider = OpenRouter
+	if _, err := NewCatalog([]Model{m}); err == nil {
+		t.Fatal("OpenRouter model accepted private inference")
+	}
+}

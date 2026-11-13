@@ -39,6 +39,9 @@ type Model struct {
 	ImageTokens int  `json:"image_tokens,omitempty"`
 	// Tools models can call tools (calculator, search, python).
 	Tools bool `json:"tools"`
+	// PrivateInference marks a NEAR AI model served from an attested TEE,
+	// so the chat can tell users not even the host reads their prompts.
+	PrivateInference bool `json:"private_inference,omitempty"`
 	// Icon is the model's badge in the UI.
 	Icon Icon `json:"icon"`
 }
@@ -106,6 +109,8 @@ func NewCatalog(models []Model) (*Catalog, error) {
 			return nil, fmt.Errorf("model catalog: %s: negative price", m.ID)
 		case m.Vision && m.ImageTokens <= 0:
 			return nil, fmt.Errorf("model catalog: %s: vision models need image_tokens", m.ID)
+		case m.PrivateInference && m.Provider != NearAI:
+			return nil, fmt.Errorf("model catalog: %s: only NEAR AI models run private inference", m.ID)
 		}
 		if _, dup := c.byID[m.ID]; dup {
 			return nil, fmt.Errorf("model catalog: duplicate id %s", m.ID)

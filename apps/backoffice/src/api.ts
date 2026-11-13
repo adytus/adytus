@@ -22,6 +22,8 @@ export type AdminModel = {
 	vision: boolean;
 	image_tokens?: number;
 	tools: boolean;
+	// NEAR AI only: served from an attested TEE.
+	private_inference?: boolean;
 	icon: ModelIcon;
 	enabled: boolean;
 	default: boolean;
