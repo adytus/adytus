@@ -73,8 +73,18 @@ func TestNearSettingsValidate(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	// No USDC means NEAR only, which is fine.
+	// Exchange pricing needs no feed.
 	s := validNear()
+	s.PriceURL, s.PriceFeed = "", ""
+	s.normalize() // as SaveSettings and Check do
+	if s.PriceURL != near.ExchangesSource {
+		t.Errorf("an empty price service became %q", s.PriceURL)
+	}
+	if err := s.Validate(); err != nil {
+		t.Errorf("exchanges: %v", err)
+	}
+	// No USDC means NEAR only, which is fine.
+	s = validNear()
 	s.USDC = ""
 	if err := s.Validate(); err != nil {
 		t.Errorf("NEAR only: %v", err)
@@ -199,7 +209,7 @@ func newNearEnv(t *testing.T) *nearEnv {
 	n := &Near{
 		DB: pool, Ledger: &Ledger{DB: pool},
 		NewClient: func(string) *near.Client { return near.NewClient(srv.URL) },
-		NewPrice:  func(string) *near.Hermes { return near.NewHermes(srv.URL) },
+		NewPrice:  func(NearSettings) near.Pricer { return near.NewHermes(srv.URL) },
 	}
 	s := validNear()
 	s.Enabled = true

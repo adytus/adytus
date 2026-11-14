@@ -255,18 +255,37 @@
 				<legend>Price</legend>
 				<div class="grid">
 					<label class="field">
-						Price service
-						<input type="url" required bind:value={form.price_url} spellcheck="false" autocomplete="off" />
-						<span class="hint">Pyth Hermes, or a compatible mirror.</span>
+						Price source
+						<select
+							value={form.price_url === 'exchanges' ? 'exchanges' : 'hermes'}
+							onchange={(e) => {
+								if (e.currentTarget.value === 'exchanges') form!.price_url = 'exchanges';
+								else if (form!.price_url === 'exchanges') form!.price_url = 'https://hermes.pyth.network';
+							}}
+						>
+							<option value="exchanges">Exchanges (Coinbase, Kraken, CoinGecko)</option>
+							<option value="hermes">Pyth Hermes server</option>
+						</select>
+						<span class="hint">
+							{form.price_url === 'exchanges'
+								? 'The middle of the three live prices. No quote is given if they differ by more than 3%.'
+								: 'Pyth’s public Hermes now asks for a key; use a Hermes you run or have access to.'}
+						</span>
 					</label>
-					<label class="field">
-						Oldest price accepted (seconds)
-						<input type="number" required min="10" max="86400" step="1" bind:value={form.max_price_age_secs} />
-					</label>
-					<label class="field wide">
-						NEAR/USD feed ID
-						<input required bind:value={form.price_feed} spellcheck="false" autocomplete="off" pattern="(0x)?[0-9a-fA-F]{'{64}'}" />
-					</label>
+					{#if form.price_url !== 'exchanges'}
+						<label class="field">
+							Hermes URL
+							<input type="url" required bind:value={form.price_url} spellcheck="false" autocomplete="off" />
+						</label>
+						<label class="field">
+							Oldest price accepted (seconds)
+							<input type="number" required min="10" max="86400" step="1" bind:value={form.max_price_age_secs} />
+						</label>
+						<label class="field wide">
+							NEAR/USD feed ID
+							<input required bind:value={form.price_feed} spellcheck="false" autocomplete="off" pattern="(0x)?[0-9a-fA-F]{'{64}'}" />
+						</label>
+					{/if}
 				</div>
 			</fieldset>
 

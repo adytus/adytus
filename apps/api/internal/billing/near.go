@@ -43,7 +43,7 @@ type Near struct {
 	// NewClient and NewPrice build the chain and price clients for the
 	// current settings; tests point them at fakes.
 	NewClient func(rpcURL string) *near.Client
-	NewPrice  func(priceURL string) *near.Hermes
+	NewPrice  func(s NearSettings) near.Pricer
 
 	rateMu  sync.Mutex
 	rate    int64
@@ -115,9 +115,14 @@ func (n *Near) client(s NearSettings) *near.Client {
 // Client is the chain client for the given settings.
 func (n *Near) Client(s NearSettings) *near.Client { return n.client(s) }
 
-func (n *Near) price(s NearSettings) *near.Hermes {
+// price is where NEAR is priced: public exchange tickers by default, or a
+// Pyth Hermes server when price_url names one.
+func (n *Near) price(s NearSettings) near.Pricer {
 	if n.NewPrice != nil {
-		return n.NewPrice(s.PriceURL)
+		return n.NewPrice(s)
+	}
+	if s.PriceURL == near.ExchangesSource {
+		return near.NewExchanges()
 	}
 	return near.NewHermes(s.PriceURL)
 }
@@ -146,6 +151,9 @@ func (s *NearSettings) normalize() {
 	s.Contract = strings.ToLower(strings.TrimSpace(s.Contract))
 	s.USDC = strings.ToLower(strings.TrimSpace(s.USDC))
 	s.PriceURL = strings.TrimRight(strings.TrimSpace(s.PriceURL), "/")
+	if s.PriceURL == "" || strings.EqualFold(s.PriceURL, near.ExchangesSource) {
+		s.PriceURL = near.ExchangesSource
+	}
 	s.PriceFeed = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s.PriceFeed)), "0x")
 }
 
@@ -167,9 +175,9 @@ func (s NearSettings) Validate() error {
 		return errs.Validation.New("set the deposit contract before switching NEAR payments on")
 	case s.USDC != "" && !near.ValidAccountID(s.USDC):
 		return errs.Validation.New("%q isn't a NEAR account ID", s.USDC)
-	case !httpURL(s.PriceURL):
-		return errs.Validation.New("the price service URL must be an http(s) URL")
-	case !priceFeedRE.MatchString(s.PriceFeed):
+	case s.PriceURL != near.ExchangesSource && !httpURL(s.PriceURL):
+		return errs.Validation.New("the price service is \"exchanges\" or a Pyth Hermes http(s) URL")
+	case s.PriceURL != near.ExchangesSource && !priceFeedRE.MatchString(s.PriceFeed):
 		return errs.Validation.New("the price feed is a 64-character hex ID")
 	case s.MaxPriceAgeSecs < 10 || s.MaxPriceAgeSecs > 86_400:
 		return errs.Validation.New("the price age limit is between 10 seconds and a day")
@@ -273,7 +281,11 @@ func (n *Near) Check(ctx context.Context, s NearSettings) ([]NearCheck, error) {
 	}
 
 	rate, err := n.price(s).USD(ctx, s.PriceFeed, time.Duration(s.MaxPriceAgeSecs)*time.Second)
-	add("NEAR price", err, fmt.Sprintf("$%.4f per NEAR.", float64(rate)/MicrosPerUSD))
+	src := "Pyth Hermes"
+	if s.PriceURL == near.ExchangesSource {
+		src = "Coinbase, Kraken and CoinGecko"
+	}
+	add("NEAR price", err, fmt.Sprintf("$%.4f per NEAR, from %s.", float64(rate)/MicrosPerUSD, src))
 	return out, nil
 }
 
