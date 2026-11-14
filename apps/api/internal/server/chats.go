@@ -668,8 +668,11 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 			_ = send("tool", st)
 		}
 
+		// The reply's own calls are captured byte for byte, for providers
+		// that sign them; the title call above is left out.
+		replyCtx, calls := llm.WithCalls(ctx)
 		var streamErr error
-		sr, err := s.reply(ctx, mm, prompt, toolIDs, observe)
+		sr, err := s.reply(replyCtx, mm, prompt, toolIDs, observe)
 		if err != nil {
 			streamErr = err
 		} else {
@@ -735,6 +738,11 @@ func (s *Server) sendMessage(c fiber.Ctx) error {
 
 		if streamErr != nil && !clientGone {
 			slog.Warn("llm stream ended with error", "err", streamErr)
+		}
+		if spec.Provider == llm.NearAI && spec.PrivateInference {
+			if p, ok := snap.Provider(llm.NearAI); ok {
+				go s.recordReceipts(prepared.replyObj.ID, userID, p, calls.Calls())
+			}
 		}
 		balance, _ := s.Ledger.Balance(ctx, userID)
 		_ = send("done", fiber.Map{

@@ -126,6 +126,23 @@ export type Tool = {
 };
 // python marks a file the model isn't shown but its file tools can open.
 export type Attachment = { id: string; name: string; image?: boolean; python?: boolean };
+// NEAR AI's signature over one model call behind a reply, and whether it
+// checked out against the bytes the server actually sent and received.
+export type InferenceReceipt = {
+	message_id: string;
+	seq: number;
+	provider: string;
+	model: string;
+	completion_id: string;
+	request_sha256: string;
+	response_sha256: string;
+	signed_text: string;
+	signature: string;
+	signing_address: string;
+	status: 'verified' | 'mismatch' | 'unavailable';
+	detail: string;
+	created_at: string;
+};
 export type Message = {
 	id: string;
 	role: 'user' | 'assistant';
@@ -230,6 +247,7 @@ export const api = {
 	chats: () => get<{ chats: Chat[] }>('/api/chats'),
 	createChat: (model?: string) => call<{ chat: Chat }>('POST', '/api/chats', { model }),
 	chat: (id: string) => get<{ chat: Chat; messages: Message[] }>(`/api/chats/${id}`),
+	receipts: (chatID: string) => get<{ receipts: InferenceReceipt[] }>(`/api/chats/${chatID}/receipts`),
 	updateChat: (id: string, patch: { title?: string; model?: string }) =>
 		call<{ chat: Chat }>('PATCH', `/api/chats/${id}`, patch),
 	deleteChat: (id: string) => call<void>('DELETE', `/api/chats/${id}`),

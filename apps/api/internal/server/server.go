@@ -33,6 +33,9 @@ type Deps struct {
 	// discount top-ups on either chain. New fills both in from Store when unset.
 	Near     *billing.Near
 	Vouchers *billing.Vouchers
+	// Signatures fetches signed receipts for a provider's completions;
+	// nil uses NEAR AI's API. Tests swap in a fake.
+	Signatures func(llm.Provider) SignatureSource
 	Sessions *session.Store
 	Blobs    blob.Store
 	Tools    *tools.Registry
@@ -126,6 +129,7 @@ func (s *Server) routes() {
 	me.Get("/chats", s.listChats)
 	me.Post("/chats", s.createChat)
 	me.Get("/chats/:id", s.getChat)
+	me.Get("/chats/:id/receipts", s.chatReceipts)
 	me.Patch("/chats/:id", s.updateChat)
 	me.Delete("/chats/:id", s.deleteChat)
 	me.Put("/chats/:id/offline", s.setChatOffline)

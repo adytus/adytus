@@ -61,7 +61,7 @@ func WithCostSink(ctx context.Context) (context.Context, *CostSink) {
 type costTransport struct{ base http.RoundTripper }
 
 func (t costTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(r)
+	resp, err := capture(r, t.base.RoundTrip)
 	if sink, ok := r.Context().Value(costKey{}).(*CostSink); ok && err == nil {
 		resp.Body = &costReader{ReadCloser: resp.Body, sink: sink}
 	}

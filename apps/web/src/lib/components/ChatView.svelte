@@ -9,6 +9,7 @@
 		bytes,
 		type Attachment,
 		type Chat,
+		type InferenceReceipt,
 		type FileItem,
 		type Message,
 		type ToolStep
@@ -56,6 +57,50 @@
 	let input = $state<HTMLTextAreaElement>();
 
 	const model = $derived(app.model(modelID));
+
+	// Signature checks for private-inference replies, by message ID. They're
+	// recorded a moment after a reply is saved, so a fresh reply is re-asked.
+	let receipts = $state<Record<string, InferenceReceipt[]>>({});
+	let receiptTimers: ReturnType<typeof setTimeout>[] = [];
+
+	async function loadReceipts(id: string) {
+		try {
+			const r = await api.receipts(id);
+			if (id !== chatID) return;
+			const by: Record<string, InferenceReceipt[]> = {};
+			for (const x of r.receipts) (by[x.message_id] ??= []).push(x);
+			receipts = by;
+		} catch {
+			// Receipts are extra; the chat reads fine without them.
+		}
+	}
+
+	function watchReceipts(id: string, messageID: string) {
+		for (const delay of [1500, 4000, 10000, 20000]) {
+			receiptTimers.push(
+				setTimeout(() => {
+					if (id === chatID && !receipts[messageID]) loadReceipts(id);
+				}, delay)
+			);
+		}
+	}
+
+	function receiptSummary(rs: InferenceReceipt[]) {
+		const signer = rs.find((r) => r.signing_address)?.signing_address ?? '';
+		const short = signer ? `${signer.slice(0, 6)}…${signer.slice(-4)}` : '';
+		const calls = rs.length === 1 ? '1 model call' : `${rs.length} model calls`;
+		if (rs.every((r) => r.status === 'verified')) {
+			return {
+				tone: 'ok',
+				text: 'Signed in TEE',
+				title: `NEAR AI's enclave key ${signer} signed ${calls}, and the signed hashes match the exact request and response bytes.`,
+				short
+			};
+		}
+		const bad = rs.find((r) => r.status === 'mismatch');
+		if (bad) return { tone: 'bad', text: 'Signature didn’t match', title: bad.detail, short };
+		return { tone: 'none', text: 'Not signed', title: rs.find((r) => r.detail)?.detail ?? '', short: '' };
+	}
 	const maxHold = $derived(model ? model.max_output_tokens * (model.completion_usd_per_mtok ?? 0) : 0);
 
 	$effect(() => {
@@ -71,6 +116,8 @@
 				modelID = app.singleModel || r.chat.model;
 				loading = false;
 				scrollDown();
+				receipts = {};
+				if (r.messages.some((m) => app.model(m.model ?? '')?.private_inference)) loadReceipts(id);
 				const p = handoff.pending;
 				if (p && p.chatID === id) {
 					handoff.pending = null;
@@ -82,7 +129,11 @@
 				loadError = err instanceof ApiError && err.status === 404 ? 'This chat no longer exists.' : String(err.message ?? err);
 			}
 		);
-		return () => controller?.abort();
+		return () => {
+			controller?.abort();
+			receiptTimers.forEach(clearTimeout);
+			receiptTimers = [];
+		};
 	});
 
 	// question returns the user message the reply at index i answers. The tool
@@ -179,6 +230,7 @@
 						liveSteps = [];
 						liveThinking = '';
 						if (chat) app.upsertChat({ ...chat, updated_at: new Date().toISOString() });
+						if (chatID && app.model(d.message.model ?? '')?.private_inference) watchReceipts(chatID, d.message.id);
 					},
 					error: (d) => {
 						sendError = { code: d.error, message: d.message };
@@ -534,6 +586,12 @@
 								{/if}
 							{/if}
 							{#if m.partial}<span class="cut">Stopped early</span>{/if}
+							{#if receipts[m.id]}
+								{@const r = receiptSummary(receipts[m.id])}
+								<span class="signed {r.tone}" title={r.title}>
+									{r.tone === 'ok' ? '✓' : r.tone === 'bad' ? '✕' : '·'} {r.text}{#if r.short}&nbsp;<code>{r.short}</code>{/if}
+								</span>
+							{/if}
 						</p>
 					</article>
 				{/if}
@@ -962,6 +1020,19 @@
 	}
 	.sealed svg {
 		flex: none;
+	}
+	.signed {
+		font-weight: 600;
+	}
+	.signed.ok {
+		color: var(--line-green);
+	}
+	.signed.bad {
+		color: var(--line-red);
+	}
+	.signed code {
+		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+		font-weight: 500;
 	}
 	.sealed a {
 		color: inherit;
