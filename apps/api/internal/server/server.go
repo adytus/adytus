@@ -36,9 +36,9 @@ type Deps struct {
 	// Signatures fetches signed receipts for a provider's completions;
 	// nil uses NEAR AI's API. Tests swap in a fake.
 	Signatures func(llm.Provider) SignatureSource
-	Sessions *session.Store
-	Blobs    blob.Store
-	Tools    *tools.Registry
+	Sessions   *session.Store
+	Blobs      blob.Store
+	Tools      *tools.Registry
 }
 
 type Server struct {
@@ -49,6 +49,8 @@ type Server struct {
 	// llmMu orders backoffice changes, so swaps land in commit order.
 	llmMu sync.Mutex
 	// providerMu guards the cached Ollama reachability check.
+	// nearUsed remembers NEAR sign-in challenges already used.
+	nearUsed        nearNonces
 	providerMu      sync.Mutex
 	ollamaCheckedAt time.Time
 	ollamaUp        bool
@@ -104,6 +106,8 @@ func (s *Server) routes() {
 	auth.Post("/signup", s.signup)
 	auth.Post("/login", s.login)
 	auth.Post("/recover", s.recover)
+	auth.Get("/near/challenge", s.nearChallenge)
+	auth.Post("/near", s.nearLogin)
 	auth.Post("/logout", s.logout)
 
 	me := api.Group("", s.requireSession)

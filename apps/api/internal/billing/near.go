@@ -112,6 +112,9 @@ func (n *Near) client(s NearSettings) *near.Client {
 	return near.NewClient(s.RPCURL)
 }
 
+// Client is the chain client for the given settings.
+func (n *Near) Client(s NearSettings) *near.Client { return n.client(s) }
+
 func (n *Near) price(s NearSettings) *near.Hermes {
 	if n.NewPrice != nil {
 		return n.NewPrice(s.PriceURL)

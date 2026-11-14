@@ -9,6 +9,7 @@ import (
 
 	"github.com/reaganiwadha/adytus/apps/api/internal/crypto"
 	"github.com/reaganiwadha/adytus/apps/api/internal/errs"
+	"github.com/reaganiwadha/adytus/apps/api/internal/near"
 	"github.com/reaganiwadha/adytus/apps/api/internal/store"
 	"github.com/reaganiwadha/adytus/apps/api/internal/vault"
 )
@@ -256,7 +257,8 @@ func (s *Server) changePassword(c fiber.Ctx) error {
 // back in after a lost password; nobody else can unlock the data.
 func (s *Server) recover(c fiber.Ctx) error {
 	var req struct {
-		Email        string `json:"email" validate:"required,email"`
+		// An email, or a NEAR account for accounts made with Login with NEAR.
+		Email        string `json:"email" validate:"required,max=254"`
 		RecoveryCode string `json:"recovery_code" validate:"required,max=64"`
 		NewPassword  string `json:"new_password" validate:"required,min=12,max=256"`
 	}
@@ -264,6 +266,9 @@ func (s *Server) recover(c fiber.Ctx) error {
 		return err
 	}
 	errBadRecovery := errs.Unauthorized.New("wrong email or recovery code")
+	if id := normalizeEmail(req.Email); !strings.Contains(id, "@") && !near.ValidAccountID(id) {
+		return errs.Validation.New("enter your email or NEAR account")
+	}
 
 	u, err := s.Store.UserByEmail(c.Context(), normalizeEmail(req.Email))
 	if errs.IsNotFound(err) || (err == nil && u.RecoveryWrappedMK == nil) {

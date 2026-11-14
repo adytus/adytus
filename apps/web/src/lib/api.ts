@@ -1,3 +1,4 @@
+import type { NearChallenge, NearSigned } from './near-login.ts';
 export type User = { id: string; email: string; created_at: string };
 export type Model = {
 	id: string;
@@ -220,6 +221,10 @@ export const api = {
 		call<{ user: User; recovery_code: string }>('POST', '/api/auth/signup', { email, password }),
 	login: (email: string, password: string) =>
 		call<{ user: User }>('POST', '/api/auth/login', { email, password }),
+	nearChallenge: () => get<NearChallenge>('/api/auth/near/challenge'),
+	// create makes the account; without it a 404 means there's none yet.
+	nearLogin: (signed: NearSigned, nonce: string, passphrase: string, create: boolean) =>
+		call<{ user: User; recovery_code?: string }>('POST', '/api/auth/near', { ...signed, nonce, passphrase, create }),
 	recover: (email: string, recovery_code: string, new_password: string) =>
 		call<{ user: User; recovery_code: string }>('POST', '/api/auth/recover', {
 			email,

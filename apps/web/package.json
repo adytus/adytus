@@ -27,6 +27,10 @@
 	},
 	"type": "module",
 	"dependencies": {
+		"@near-wallet-selector/core": "10.1.4",
+		"@near-wallet-selector/meteor-wallet": "10.1.4",
+		"@near-wallet-selector/my-near-wallet": "10.1.4",
+		"buffer": "6.0.3",
 		"date-fns": "^4.4.0",
 		"qrcode-generator": "^2.0.4",
 		"svelte-streamdown": "^4.2.1"
