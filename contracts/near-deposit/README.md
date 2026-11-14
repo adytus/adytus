@@ -2,6 +2,18 @@
 
 The contract users pay when they top up with NEAR or USDC on NEAR. It logs each payment with the payer's memo, and the API reads that log (`apps/api/internal/billing/near.go`). It has no withdraw method and no owner. Money leaves only with the contract account's own key, so keep that key offline.
 
+## Quick deploy (Windows)
+
+`deploy.ps1` runs every step below, skipping any already done: it gets the NEAR CLI, builds the WASM if it's missing (with Docker), checks the USDC token, creates the account from the testnet faucet, deploys and initialises the contract, and registers it with USDC.
+
+```powershell
+cd contracts\near-deposit
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Account adytus-pay.testnet -DryRun   # show what it would do
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Account adytus-pay.testnet           # do it
+```
+
+Add `-Network mainnet` for mainnet (create and fund the account yourself first), `-LegacyKeychain` to keep keys in `~/.near-credentials`, or `-Redeploy` to upload a new build to an existing contract.
+
 ## Build
 
 ```sh
