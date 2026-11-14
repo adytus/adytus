@@ -1,14 +1,43 @@
 # Adytus
 
-Private, encrypted chatbot for enterprise. An OpenWebUI / chatbot hybrid that wraps OpenRouter, where only the user can read their stored data (not even admins).
+The private AI workspace where your data stays sealed. Chats and files are encrypted with your own key, so we can't read what's stored. Private models run on NEAR AI Cloud inside TEEs (Intel TDX + NVIDIA confidential computing), so the model host can't read your prompts. Top-ups go through our own NEAR deposit contract.
 
-> Status: working prototype. Accounts with encrypted chats and files, streamed chat with per-call credit metering, image input on vision models, USDC/ETH payments on Base, and NEAR/USDC payments on NEAR.
+> Status: working prototype. Accounts with encrypted chats and files, streamed chat with per-call credit metering, private inference on NEAR AI Cloud, image input on vision models, and payments in NEAR or USDC on NEAR, or USDC or ETH on Base.
+
+## Live demo
+
+URL: [DEMO_URL] · login: [DEMO_EMAIL] / [DEMO_PASSWORD] · NEAR contract: [CONTRACT_ACCOUNT] ([NETWORK])
+
+## Built at NEAR Hackathon
+
+- **Existing project, disclosed.** Adytus started on 2026-10-16 (first commit `1bbf6a1`). The core app (accounts, encryption, chat, metering, tools, Base payments) was built before the NEAR work below.
+- **NEAR work built during the hackathon:**
+  - `12f9249`: NEAR AI Cloud as a model provider, with TEE models flagged as private inference
+  - `cdba227`: private-inference notice in the chat
+  - `5df0b85`: NEAR AI note on sealed attachments
+  - `82ce498`: NEAR and USDC payments, plus our own deposit contract, [`contracts/near-deposit`](contracts/near-deposit)
+  - `a8e0430`: signed inference receipts. NEAR AI's per-answer signature is checked against the exact request and response bytes (built; being verified against NEAR AI's live API)
+- **How NEAR fits:** open-weight models run in Intel TDX and NVIDIA confidential-computing TEEs on NEAR AI Cloud, so the host can't read prompts. Top-ups go through our own NEAR contract: users pay NEAR or USDC with a personal memo, and the API reads the contract's payment log to credit them.
+
+## Quickstart with NEAR AI
+
+Minimal settings in `apps/api/.env`, with a key from [cloud.near.ai](https://cloud.near.ai):
+
+```sh
+LLM_PROVIDER=nearai
+LLM_API_KEY=sk-...
+MODELS_FILE=models.nearai.json
+```
+
+Then follow [Running locally](#running-locally). To take payments on NEAR, deploy [`contracts/near-deposit`](contracts/near-deposit) (its README has the commands) and set it up in the backoffice under **Payments → NEAR**.
 
 ## Docs
 
 - [`docs/brief.md`](docs/brief.md) - product brief and original requirements
 - [`docs/architecture.md`](docs/architecture.md) - stack, encryption model, and open questions
 - [`docs/design.md`](docs/design.md) - design vibes and reference images
+- [`docs/deploy.md`](docs/deploy.md) - push targets and where each part is deployed
+- [`contracts/near-deposit`](contracts/near-deposit) - the NEAR deposit contract: build, deploy, move funds
 
 ## Layout
 
@@ -18,27 +47,10 @@ adytus/
     api/    Go backend (Fiber v3, pgx, goose, errorx)
     web/         SvelteKit frontend (Bun)
     backoffice/  admin UI, served by the API to admins only
+  contracts/
+    near-deposit/  NEAR deposit contract (Rust, near-sdk)
   docs/
   compose.yaml   Postgres, SeaweedFS (S3) and Ollama for local dev
-```
-
-## Push targets
-
-The monorepo is published to three remotes:
-
-| Remote | Repository | Contents |
-| --- | --- | --- |
-| `origin` | `gecenterprises/adytus` | full monorepo |
-| `backend` | `reaganiwadha/adytus-backend` | full monorepo mirror (Railway) |
-| `ui` | `reaganiwadha/adytus-ui` | `apps/web` subtree only (Vercel) |
-
-```sh
-git remote add backend https://github.com/reaganiwadha/adytus-backend
-git remote add ui https://github.com/reaganiwadha/adytus-ui
-
-git push origin main
-git push backend main
-git subtree push --prefix apps/web ui main
 ```
 
 ## Running locally
@@ -47,7 +59,7 @@ git subtree push --prefix apps/web ui main
 docker compose up -d                       # Postgres :5432, SeaweedFS S3 :9000, Ollama :11434
 docker compose exec ollama ollama pull gemma3:270m
 docker compose exec ollama ollama pull qwen2.5vl:3b   # vision, ~3 GB, fits in 8 GB VRAM
-cp apps/api/.env.example apps/api/.env     # set SERVER_KEY
+cp apps/api/.env.example apps/api/.env     # set SERVER_KEY and LLM_API_KEY (NEAR AI)
 cd apps/api && go run ./cmd/api            # see the env note below; :8080, runs migrations on start
 cd apps/web && bun install && bun run dev  # :5173, proxies /api to :8080
 cd apps/backoffice && bun install && bun run dev  # rebuilds dist/ on change; the API serves it
@@ -55,7 +67,7 @@ cd apps/backoffice && bun install && bun run dev  # rebuilds dist/ on change; th
 
 The API reads its config from the environment. In bash or zsh, load `.env` with `set -a && . ./.env && set +a` first; that line does not work in fish (use `bash -c 'set -a && . ./.env && set +a && go run ./cmd/api'`).
 
-The LLM defaults to a local Ollama (`LLM_PROVIDER=ollama`), priced like OpenRouter models in `models.ollama.json` so budgeting behaves the same. Ollama's context window is set server-wide by `OLLAMA_CONTEXT_LENGTH` in `compose.yaml` (its OpenAI-compatible API can't set it per request); keep it equal to `context_tokens` in the catalog. Switch to OpenRouter in `.env`; every OpenRouter request is sent with `provider.data_collection=deny` and `zdr=true`. Or use NEAR AI Cloud (`LLM_PROVIDER=nearai`, `MODELS_FILE=models.nearai.json`, key from cloud.near.ai): its open-weight models run inside TEEs, so not even the host can read prompts, and the backoffice's model browser marks which ones are private. When present, DeepSeek V4.1 Flash is offered first and is the default for new chats unless the backoffice picks another default. Ollama models are hidden from the picker while its endpoint does not answer.
+`.env.example` starts on NEAR AI Cloud (`LLM_PROVIDER=nearai`, `MODELS_FILE=models.nearai.json`, key from cloud.near.ai): its open-weight models run inside TEEs, so the host can't read prompts, and the backoffice's model browser marks which ones are private. To work offline, switch to the local Ollama (`LLM_PROVIDER=ollama`), priced like OpenRouter models in `models.ollama.json` so budgeting behaves the same. Ollama's context window is set server-wide by `OLLAMA_CONTEXT_LENGTH` in `compose.yaml` (its OpenAI-compatible API can't set it per request); keep it equal to `context_tokens` in the catalog. OpenRouter also works; every OpenRouter request is sent with `provider.data_collection=deny` and `zdr=true`. When present, DeepSeek V4.1 Flash is offered first and is the default for new chats unless the backoffice picks another default. Ollama models are hidden from the picker while its endpoint does not answer.
 
 ## Backoffice
 
@@ -97,3 +109,15 @@ cd apps/backoffice && bun run check
 Integration tests drop and recreate the schema of the database they're given, so point them at a throwaway one.
 
 The sandbox tests need Deno and `apps/api/.pyodide` (or `PYODIDE_DIR`), and skip without them.
+
+## Third-party libraries and AI assistance
+
+**API (Go, `apps/api/go.mod`):** [Fiber](https://github.com/gofiber/fiber) (HTTP), [pgx](https://github.com/jackc/pgx) (Postgres), [goose](https://github.com/pressly/goose) (migrations), [Eino](https://github.com/cloudwego/eino) and its OpenAI adapter (model calls and tool loop), [errorx](https://github.com/joomcode/errorx), [validator](https://github.com/go-playground/validator), [env](https://github.com/caarlos0/env), [google/uuid](https://github.com/google/uuid), [null](https://github.com/guregu/null), [minio-go](https://github.com/minio/minio-go) (S3), [btcd](https://github.com/btcsuite/btcd) (HD key derivation, secp256k1 signature recovery), [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) (Argon2id, Keccak), [golang.org/x/image](https://pkg.go.dev/golang.org/x/image), [golang.org/x/sync](https://pkg.go.dev/golang.org/x/sync), [expr](https://github.com/expr-lang/expr) (calculator tool), [excelize](https://github.com/xuri/excelize) (spreadsheets), [go-pdfium](https://github.com/klippa-app/go-pdfium) with [wazero](https://github.com/tetratelabs/wazero) (PDFium as WebAssembly).
+
+**Web and backoffice (`apps/web/package.json`, `apps/backoffice/package.json`):** [Svelte](https://svelte.dev) and [SvelteKit](https://svelte.dev/docs/kit) (with the Vercel adapter), [Vite](https://vite.dev), [Tailwind CSS](https://tailwindcss.com), TypeScript, svelte-check, [svelte-streamdown](https://www.npmjs.com/package/svelte-streamdown) (streamed Markdown), [date-fns](https://date-fns.org), [qrcode-generator](https://www.npmjs.com/package/qrcode-generator). Built with [Bun](https://bun.sh).
+
+**Contract (`contracts/near-deposit/Cargo.toml`):** [near-sdk](https://github.com/near/near-sdk-rs), built with [cargo-near](https://github.com/near/cargo-near).
+
+**Runtime and services:** [Pyodide](https://pyodide.org) under [Deno](https://deno.com) (Python sandbox, with the packages listed above), [PDFium](https://pdfium.googlesource.com/pdfium/), Postgres, [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (S3 storage), [SearXNG](https://github.com/searxng/searxng) (web search), [Ollama](https://ollama.com) (local models), [NEAR AI Cloud](https://cloud.near.ai) and [OpenRouter](https://openrouter.ai) (model providers), [Pyth Hermes](https://docs.pyth.network/price-feeds) (NEAR/USD price), NEAR RPC, and Base RPC with a Chainlink ETH/USD feed.
+
+**AI assistance:** code and docs were written with help from [Claude Code](https://claude.com/claude-code) (Anthropic). Every change was reviewed and committed by the author.
