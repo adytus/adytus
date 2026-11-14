@@ -1,23 +1,37 @@
 <script lang="ts">
 	import qrcode from 'qrcode-generator';
-	import { api, ApiError, tokenCount, usd, type CryptoInfo, type CryptoQuote, type CryptoVoucher } from '#lib/api.ts';
+	import {
+		api,
+		ApiError,
+		tokenCount,
+		usd,
+		type CryptoInfo,
+		type CryptoQuote,
+		type CryptoVoucher,
+		type NearInfo,
+		type NearQuote
+	} from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
 	import Alert from '#lib/components/Alert.svelte';
 
-	// Add tokens: pick an amount and a currency, then pay on Base. The page
-	// watches for the payment and closes the loop when it is credited.
+	// Add tokens: pick an amount and a currency, then pay on Base or NEAR. The
+	// page watches for the payment and closes the loop when it is credited.
 	const PRESETS = [10, 25, 50, 100];
 	const MAX_USD = 10_000;
 
 	let dialog = $state<HTMLDialogElement>();
+	// Base and NEAR are switched on separately; either may be off.
 	let info = $state<CryptoInfo | null>(null);
+	let near = $state<NearInfo | null>(null);
 	let loadError = $state(false);
 
 	let stage = $state<'choose' | 'pay' | 'done'>('choose');
 	let preset = $state<number | 'custom'>(25);
 	let custom = $state('');
-	let asset = $state<'usdc' | 'eth'>('usdc');
+	type Asset = 'usdc' | 'eth' | 'near' | 'near-usdc';
+	let asset = $state<Asset>('usdc');
 	let quote = $state<CryptoQuote | null>(null);
+	let nearQuote = $state<NearQuote | null>(null);
 	let busy = $state(false);
 	let error = $state('');
 	let copied = $state('');
@@ -31,13 +45,35 @@
 	// Deposits seen at the last poll, to spot a new credit.
 	let known: Set<string> | null = null;
 
+	const options = $derived.by(() => {
+		const o: Asset[] = [];
+		if (info?.enabled) o.push('usdc', 'eth');
+		if (near?.enabled) {
+			o.push('near');
+			if (near.usdc) o.push('near-usdc');
+		}
+		return o;
+	});
+	const enabled = $derived(options.length > 0);
+	const onNear = $derived(asset === 'near' || asset === 'near-usdc');
+	// Pricing is locked for the volatile coins only.
+	const quoted = $derived(asset === 'eth' || asset === 'near');
+	const activeQuote = $derived(asset === 'eth' ? quote : asset === 'near' ? nearQuote : null);
+	const chainMin = $derived((onNear ? near?.min_micros : info?.min_micros) ?? 0);
+	const deposits = $derived(
+		[...(info?.deposits ?? []), ...(near?.deposits ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at))
+	);
+
+	// Keep the picked currency one the server offers.
+	$effect(() => {
+		if (options.length > 0 && !options.includes(asset)) asset = options[0];
+	});
+
 	const dollars = $derived(preset === 'custom' ? Number(custom) : preset);
 	const micros = $derived(Math.round(dollars * 1_000_000));
 	// The amount picked is the list price; a voucher lowers what is actually sent.
 	const payMicros = $derived(voucher ? Math.ceil((micros * (100 - voucher.percent)) / 100) : micros);
-	const minMicros = $derived(
-		voucher ? Math.ceil(((info?.min_micros ?? 0) * 100) / (100 - voucher.percent)) : (info?.min_micros ?? 0)
-	);
+	const minMicros = $derived(voucher ? Math.ceil((chainMin * 100) / (100 - voucher.percent)) : chainMin);
 	const validAmount = $derived(Number.isFinite(micros) && micros >= minMicros && micros <= MAX_USD * 1_000_000);
 	const tokens = $derived(validAmount ? Math.floor(micros / 1000) : 0);
 
@@ -54,6 +90,7 @@
 	function reset() {
 		stage = 'choose';
 		quote = null;
+		nearQuote = null;
 		error = '';
 		voucherError = '';
 		added = 0;
@@ -63,12 +100,18 @@
 
 	async function load() {
 		try {
-			const r = await api.cryptoInfo();
-			const fresh = known ? r.deposits.filter((d) => d.status === 'credited' && !known!.has(d.id)) : [];
-			known = new Set(r.deposits.map((d) => d.id));
+			const [b, n] = await Promise.allSettled([api.cryptoInfo(), api.nearInfo()]);
+			if (b.status === 'rejected' && n.status === 'rejected') throw b.reason;
+			// A chain that didn't answer keeps its last good state.
+			const r = b.status === 'fulfilled' ? b.value : info;
+			const nr = n.status === 'fulfilled' ? n.value : near;
+			const all = [...(r?.deposits ?? []), ...(nr?.deposits ?? [])];
+			const fresh = known ? all.filter((d) => d.status === 'credited' && !known!.has(d.id)) : [];
+			known = new Set(all.map((d) => d.id));
 			info = r;
+			near = nr;
 			// The price on the pay screen stays put; a late payment gets a grace period.
-			if (stage !== 'pay') voucher = r.voucher;
+			if (stage !== 'pay') voucher = r?.voucher ?? nr?.voucher ?? null;
 			loadError = false;
 			if (fresh.length > 0) {
 				added = fresh.reduce((n, d) => n + d.credit_tokens, 0);
@@ -77,7 +120,7 @@
 			}
 		} catch {
 			// A failed poll keeps the last good state; only a first load shows the error.
-			if (!info) loadError = true;
+			if (!info && !near) loadError = true;
 		}
 	}
 
@@ -97,9 +140,9 @@
 
 	async function next(e?: SubmitEvent) {
 		e?.preventDefault();
-		if (!validAmount || !info) return;
+		if (!validAmount || !enabled) return;
 		error = '';
-		if (asset === 'usdc') {
+		if (!quoted) {
 			stage = 'pay';
 			return;
 		}
@@ -110,7 +153,8 @@
 		busy = true;
 		error = '';
 		try {
-			quote = (await api.cryptoQuote(payMicros)).quote;
+			if (asset === 'near') nearQuote = (await api.nearQuote(payMicros)).quote;
+			else quote = (await api.cryptoQuote(payMicros)).quote;
 			stage = 'pay';
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Could not get a price. Try again.';
@@ -165,9 +209,39 @@
 		return `${w / WEI}.${(w % WEI).toString().padStart(18, '0').replace(/0+$/, '') || '0'}`;
 	};
 
-	const left = $derived(quote ? Math.max(0, Math.floor((new Date(quote.expires_at).getTime() - now) / 1000)) : 0);
+	const YOCTO = 10n ** 24n;
+	// Rounded up to 5 decimals so the amount shown is never short of the quote.
+	const nearText = (yocto: string) => {
+		const step = 10n ** 19n;
+		const y = (BigInt(yocto) + step - 1n) / step;
+		return `${y / 100_000n}.${(y % 100_000n).toString().padStart(5, '0')}`;
+	};
+	const nearExact = (yocto: string) => {
+		const y = BigInt(yocto);
+		return `${y / YOCTO}.${(y % YOCTO).toString().padStart(24, '0').replace(/0+$/, '') || '0'}`;
+	};
+
+	// near-cli-rs commands; it asks how to sign. A wallet that can call a
+	// contract method works just as well with the same arguments.
+	const nearCommand = $derived.by(() => {
+		if (!near?.enabled || !near.contract || !near.memo) return '';
+		const net = near.network ?? 'mainnet';
+		if (asset === 'near' && nearQuote) {
+			const args = JSON.stringify({ memo: near.memo });
+			return `near contract call-function as-transaction ${near.contract} deposit json-args '${args}' prepaid-gas '30.0 Tgas' attached-deposit '${nearExact(nearQuote.amount_yocto)} NEAR' network-config ${net}`;
+		}
+		if (asset === 'near-usdc' && near.usdc) {
+			const args = JSON.stringify({ receiver_id: near.contract, amount: String(payMicros), msg: near.memo });
+			return `near contract call-function as-transaction ${near.usdc} ft_transfer_call json-args '${args}' prepaid-gas '100.0 Tgas' attached-deposit '1 yoctoNEAR' network-config ${net}`;
+		}
+		return '';
+	});
+
+	const left = $derived(
+		activeQuote ? Math.max(0, Math.floor((new Date(activeQuote.expires_at).getTime() - now) / 1000)) : 0
+	);
 	const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-	const expired = $derived(asset === 'eth' && stage === 'pay' && left === 0);
+	const expired = $derived(quoted && stage === 'pay' && left === 0);
 
 	async function copy(label: string, text: string) {
 		try {
@@ -185,7 +259,22 @@
 	const amountText = (d: { asset: string; amount_atomic: string }) =>
 		d.asset === 'usdc'
 			? `${(Number(d.amount_atomic) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`
-			: `${ethText(d.amount_atomic)} ETH`;
+			: d.asset === 'near'
+				? `${nearText(d.amount_atomic)} NEAR`
+				: `${ethText(d.amount_atomic)} ETH`;
+	const subtitle = $derived(
+		info?.enabled && near?.enabled
+			? 'Pay with USDC or ETH on Base, or NEAR or USDC on NEAR. $1 buys 1,000 tokens.'
+			: near?.enabled
+				? `Pay with NEAR${near.usdc ? ' or USDC' : ''} on NEAR. $1 buys 1,000 tokens.`
+				: 'Pay with USDC or ETH on Base. $1 buys 1,000 tokens.'
+	);
+	const assetLabel: Record<Asset, { name: string; note: string }> = {
+		usdc: { name: 'USDC', note: 'Base · $1 each' },
+		eth: { name: 'ETH', note: 'Base · price locked 15 min' },
+		near: { name: 'NEAR', note: 'NEAR · price locked' },
+		'near-usdc': { name: 'USDC', note: 'NEAR · $1 each' }
+	};
 
 	function onBackdrop(e: MouseEvent) {
 		if (e.target === dialog) app.closeTopUp();
@@ -197,7 +286,7 @@
 		<header>
 			<div>
 				<h2 id="topup-h">Add tokens</h2>
-				<p class="sub">Pay with USDC or ETH on Base. $1 buys 1,000 tokens.</p>
+				<p class="sub">{subtitle}</p>
 			</div>
 			<button class="x" type="button" aria-label="Close" onclick={() => app.closeTopUp()}>×</button>
 		</header>
@@ -206,9 +295,9 @@
 			<Alert title="Payments are unavailable">
 				<p>The server didn't answer. Close this and try again in a moment.</p>
 			</Alert>
-		{:else if !info}
+		{:else if !info && !near}
 			<p class="state">Loading…</p>
-		{:else if !info.enabled}
+		{:else if !enabled}
 			<Alert tone="info" title="Crypto payments aren't set up yet">
 				<p>This server has no payment address configured, so tokens can't be added right now.</p>
 			</Alert>
@@ -292,12 +381,11 @@
 				<fieldset>
 					<legend>Pay with</legend>
 					<div class="seg" role="radiogroup" aria-label="Currency">
-						<button type="button" role="radio" aria-checked={asset === 'usdc'} class:on={asset === 'usdc'} onclick={() => (asset = 'usdc')}>
-							<strong>USDC</strong><span>Stable, $1 each</span>
-						</button>
-						<button type="button" role="radio" aria-checked={asset === 'eth'} class:on={asset === 'eth'} onclick={() => (asset = 'eth')}>
-							<strong>ETH</strong><span>Price locked 15 min</span>
-						</button>
+						{#each options as o (o)}
+							<button type="button" role="radio" aria-checked={asset === o} class:on={asset === o} onclick={() => (asset = o)}>
+								<strong>{assetLabel[o].name}</strong><span>{assetLabel[o].note}</span>
+							</button>
+						{/each}
 					</div>
 				</fieldset>
 
@@ -313,7 +401,7 @@
 					<button type="button" class="link" onclick={() => (stage = 'choose')}>Change</button>
 				</div>
 
-				{#if asset === 'usdc'}
+				{#if asset === 'usdc' && info}
 					<p class="step">Send <strong>{(payMicros / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC</strong> on the <strong>Base</strong> network to:</p>
 					<div class="card">
 						<div class="qr" aria-hidden="true">{@html qrSvg(info.address!)}</div>
@@ -325,7 +413,58 @@
 						</div>
 					</div>
 					<p class="note">Any amount over {usd(info.min_micros ?? 0, 0)} works, so it needn't match exactly. Other tokens or networks sent here can't be recovered automatically.</p>
-				{:else if quote}
+				{:else if onNear && near?.contract && near.memo}
+					{#if asset === 'near' && nearQuote}
+						<p class="step">
+							Pay <strong>{nearText(nearQuote.amount_yocto)} NEAR</strong> on <strong>NEAR</strong>{near.network === 'testnet' ? ' testnet' : ''} by calling
+							<code>deposit</code> on the contract below with your memo.
+						</p>
+					{:else if asset === 'near-usdc'}
+						<p class="step">
+							Send <strong>{(payMicros / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC</strong> on <strong>NEAR</strong>{near.network === 'testnet' ? ' testnet' : ''}
+							with <code>ft_transfer_call</code> to the contract below, with your memo as the message.
+						</p>
+					{/if}
+					<div class="near-card" class:stale={expired}>
+						<div class="kv">
+							<span>Contract</span>
+							<p class="addr">{near.contract}</p>
+							<button class="btn" type="button" onclick={() => copy('contract', near!.contract!)}>{copied === 'contract' ? 'Copied' : 'Copy'}</button>
+						</div>
+						<div class="kv">
+							<span>Your memo</span>
+							<p class="addr memo">{near.memo}</p>
+							<button class="btn" type="button" onclick={() => copy('memo', near!.memo!)}>{copied === 'memo' ? 'Copied' : 'Copy'}</button>
+						</div>
+						{#if asset === 'near' && nearQuote}
+							<div class="kv">
+								<span>Amount</span>
+								<p class="addr">{nearExact(nearQuote.amount_yocto)} NEAR</p>
+								<button class="btn" type="button" onclick={() => copy('amt', nearExact(nearQuote!.amount_yocto))}>{copied === 'amt' ? 'Copied' : 'Copy'}</button>
+							</div>
+						{/if}
+					</div>
+					{#if nearCommand}
+						<details class="cli">
+							<summary>Pay from the command line</summary>
+							<p class="note">With <a href="https://github.com/near/near-cli-rs" target="_blank" rel="noopener noreferrer">near-cli-rs</a>; it asks which account signs.</p>
+							<pre>{nearCommand}</pre>
+							<button class="btn" type="button" onclick={() => copy('cli', nearCommand)}>{copied === 'cli' ? 'Copied' : 'Copy command'}</button>
+						</details>
+					{/if}
+					{#if asset === 'near' && nearQuote}
+						{#if expired}
+							<Alert tone="info" title="This price has expired">
+								<p>A payment sent now is credited at the current NEAR price instead.</p>
+								{#snippet action()}<button class="btn" type="button" disabled={busy} onclick={getQuote}>New price</button>{/snippet}
+							</Alert>
+						{:else}
+							<p class="note">{usd(nearQuote.rate_micros, 4)} per NEAR, held for <strong>{mmss(left)}</strong>. The memo is what credits you, so don't leave it out.</p>
+						{/if}
+					{:else}
+						<p class="note">Any amount over {usd(near.min_micros ?? 0, 0)} works. The memo is what credits you; a payment without it can't be matched automatically.</p>
+					{/if}
+				{:else if asset === 'eth' && quote && info}
 					<p class="step">Send <strong>{ethText(quote.amount_wei)} ETH</strong> on the <strong>Base</strong> network to:</p>
 					<div class="card" class:stale={expired}>
 						<div class="qr" aria-hidden="true">
@@ -356,15 +495,22 @@
 				{/if}
 				{#if error}<Alert title="No price yet" ondismiss={() => (error = '')}><p>{error}</p></Alert>{/if}
 
-				<p class="wait" role="status"><span class="pulse" aria-hidden="true"></span>Waiting for your payment. Tokens appear after {info.confirmations} confirmations, about {Math.round((info.confirmations ?? 12) * 2)} seconds.</p>
+				<p class="wait" role="status">
+					<span class="pulse" aria-hidden="true"></span>
+					{#if onNear}
+						Waiting for your payment. Tokens appear a few seconds after it's final on NEAR.
+					{:else}
+						Waiting for your payment. Tokens appear after {info?.confirmations} confirmations, about {Math.round((info?.confirmations ?? 12) * 2)} seconds.
+					{/if}
+				</p>
 			</div>
 		{/if}
 
-		{#if info?.enabled && info.deposits.length > 0 && stage !== 'done'}
+		{#if enabled && deposits.length > 0 && stage !== 'done'}
 			<details class="history">
 				<summary>Recent payments</summary>
 				<ul>
-					{#each info.deposits as d (d.id)}
+					{#each deposits as d (d.id)}
 						<li>
 							<span>{fmtDate(d.created_at)}</span>
 							<span>{amountText(d)}</span>
@@ -372,7 +518,7 @@
 								{d.status === 'credited' ? `+${tokenCount(d.credit_tokens)}` : 'too small'}
 							</span>
 							{#if d.tx_hash}
-								<a href="{explorer(info.chain_id)}/tx/{d.tx_hash}" target="_blank" rel="noopener noreferrer">View</a>
+								<a href="{explorer(info?.chain_id)}/tx/{d.tx_hash}" target="_blank" rel="noopener noreferrer">View</a>
 							{:else}
 								<span></span>
 							{/if}
@@ -672,6 +818,58 @@
 		flex-wrap: wrap;
 		gap: 0.5rem;
 	}
+	.near-card {
+		display: grid;
+		gap: 0.625rem;
+		padding: 0.875rem;
+		border: 1px solid var(--rule);
+		border-radius: 14px;
+	}
+	.near-card.stale {
+		opacity: 0.55;
+	}
+	.kv {
+		display: grid;
+		grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+		gap: 0.75rem;
+		align-items: center;
+	}
+	.kv > span {
+		font-size: 0.8125rem;
+		color: var(--muted);
+	}
+	.memo {
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+	}
+	.step code,
+	.cli pre {
+		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+		font-size: 0.8125rem;
+	}
+	.cli {
+		display: grid;
+		gap: 0.5rem;
+		font-size: 0.875rem;
+	}
+	.cli summary {
+		cursor: pointer;
+		font-weight: 600;
+		color: var(--text-soft);
+	}
+	.cli[open] {
+		gap: 0.5rem;
+	}
+	.cli pre {
+		margin: 0.5rem 0;
+		padding: 0.625rem 0.75rem;
+		border-radius: 10px;
+		background: var(--surface-2);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		user-select: all;
+	}
 	.note {
 		margin: 0;
 		font-size: 0.8125rem;
@@ -784,6 +982,12 @@
 		}
 		.history li {
 			grid-template-columns: 1fr auto;
+		}
+		.kv {
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
+		.kv > span {
+			grid-column: 1 / -1;
 		}
 	}
 </style>

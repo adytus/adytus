@@ -6,6 +6,7 @@
 	import ModelForm from './ModelForm.svelte';
 	import Catalog from './Catalog.svelte';
 	import Payments from './Payments.svelte';
+	import NearPayments from './NearPayments.svelte';
 	import Vouchers from './Vouchers.svelte';
 
 	let st = $state<State | null>(null);
@@ -307,6 +308,7 @@
 		</section>
 		{:else if tab === 'payments'}
 		<Payments />
+		<NearPayments />
 		{:else if tab === 'vouchers'}
 		<Vouchers />
 		{:else}

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/reaganiwadha/adytus/apps/api/internal/billing"
@@ -57,8 +59,35 @@ func (s *Server) cryptoQuote(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"quote": q})
 }
 
+// paymentsOn reports whether any way to pay is switched on; vouchers need one.
+func (s *Server) paymentsOn(ctx context.Context) bool {
+	return s.Deposits != nil || s.Near.Enabled(ctx)
+}
+
+func (s *Server) nearInfo(c fiber.Ctx) error {
+	info, err := s.Near.Info(c.Context(), mustAuth(c).UserID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(info)
+}
+
+func (s *Server) nearQuote(c fiber.Ctx) error {
+	var req struct {
+		USDMicros int64 `json:"usd_micros" validate:"required,gt=0"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	q, err := s.Near.Quote(c.Context(), mustAuth(c).UserID, req.USDMicros)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"quote": q})
+}
+
 func (s *Server) claimVoucher(c fiber.Ctx) error {
-	if s.Deposits == nil {
+	if !s.paymentsOn(c.Context()) {
 		return errs.NotFound.New("crypto payments are not enabled")
 	}
 	var req struct {
@@ -67,7 +96,7 @@ func (s *Server) claimVoucher(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return err
 	}
-	v, err := s.Deposits.ClaimVoucher(c.Context(), mustAuth(c).UserID, req.Code)
+	v, err := s.Vouchers.ClaimVoucher(c.Context(), mustAuth(c).UserID, req.Code)
 	if err != nil {
 		return err
 	}
@@ -75,10 +104,7 @@ func (s *Server) claimVoucher(c fiber.Ctx) error {
 }
 
 func (s *Server) removeVoucher(c fiber.Ctx) error {
-	if s.Deposits == nil {
-		return errs.NotFound.New("crypto payments are not enabled")
-	}
-	if err := s.Deposits.RemoveVoucher(c.Context(), mustAuth(c).UserID); err != nil {
+	if err := s.Vouchers.RemoveVoucher(c.Context(), mustAuth(c).UserID); err != nil {
 		return err
 	}
 	return c.JSON(fiber.Map{"voucher": nil})

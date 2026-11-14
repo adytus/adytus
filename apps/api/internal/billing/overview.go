@@ -68,7 +68,7 @@ func (d *Deposits) Overview(ctx context.Context) (Overview, error) {
 			MAX(c.created_at) FILTER (WHERE c.status = 'credited')
 		FROM deposit_addresses a
 		JOIN users u ON u.id = a.user_id
-		LEFT JOIN crypto_deposits c ON c.user_id = a.user_id
+		LEFT JOIN crypto_deposits c ON c.user_id = a.user_id AND c.chain = 'base'
 		WHERE a.address IS NOT NULL
 		GROUP BY a.user_id, u.email, a.idx, a.address
 		ORDER BY a.idx

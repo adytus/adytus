@@ -27,7 +27,7 @@ export type CryptoQuote = {
 };
 export type CryptoDeposit = {
 	id: string;
-	asset: 'usdc' | 'eth';
+	asset: 'usdc' | 'eth' | 'near';
 	amount_atomic: string;
 	credit_micros: number;
 	credit_tokens: number;
@@ -48,6 +48,27 @@ export type CryptoInfo = {
 	deposits: CryptoDeposit[];
 };
 export type CryptoVoucher = { code: string; percent: number; expires_at: string };
+// NEAR payments go to one contract, attributed by the user's memo.
+export type NearQuote = {
+	id: string;
+	usd_micros: number;
+	usd_tokens: number;
+	amount_yocto: string;
+	rate_micros: number;
+	expires_at: string;
+};
+export type NearInfo = {
+	enabled: boolean;
+	network?: 'mainnet' | 'testnet';
+	contract?: string;
+	usdc?: string;
+	memo?: string;
+	min_micros?: number;
+	min_tokens?: number;
+	quote: NearQuote | null;
+	voucher: CryptoVoucher | null;
+	deposits: CryptoDeposit[];
+};
 export type Balance = {
 	credit_micros: number;
 	held_micros: number;
@@ -201,6 +222,8 @@ export const api = {
 	cryptoInfo: () => get<CryptoInfo>('/api/billing/crypto'),
 	cryptoQuote: (usd_micros: number) =>
 		call<{ quote: CryptoQuote }>('POST', '/api/billing/crypto/quote', { usd_micros }),
+	nearInfo: () => get<NearInfo>('/api/billing/near'),
+	nearQuote: (usd_micros: number) => call<{ quote: NearQuote }>('POST', '/api/billing/near/quote', { usd_micros }),
 	claimVoucher: (code: string) => call<{ voucher: CryptoVoucher }>('POST', '/api/billing/voucher', { code }),
 	removeVoucher: () => call<{ voucher: null }>('DELETE', '/api/billing/voucher'),
 

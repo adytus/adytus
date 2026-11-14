@@ -161,8 +161,8 @@ func (d *Deposits) Info(ctx context.Context, userID uuid.UUID) (DepositInfo, err
 
 	var q Quote
 	err = d.DB.QueryRow(ctx, `
-		SELECT id, usd_micros, amount_wei::text, rate_micros, expires_at
-		FROM eth_quotes WHERE user_id = $1 AND status = 'open' AND expires_at > now()
+		SELECT id, usd_micros, amount_atomic::text, rate_micros, expires_at
+		FROM crypto_quotes WHERE user_id = $1 AND asset = 'eth' AND status = 'open' AND expires_at > now()
 		ORDER BY created_at DESC LIMIT 1`, userID).
 		Scan(&q.ID, &q.USDMicros, &q.AmountWei, &q.RateMicros, &q.ExpiresAt)
 	switch {
@@ -174,13 +174,13 @@ func (d *Deposits) Info(ctx context.Context, userID uuid.UUID) (DepositInfo, err
 		return info, err
 	}
 
-	if info.Voucher, err = d.claimed(ctx, userID); err != nil {
+	if info.Voucher, err = (&Vouchers{DB: d.DB}).Claimed(ctx, userID); err != nil {
 		return info, err
 	}
 
 	rows, err := d.DB.Query(ctx, `
 		SELECT id, asset, amount_atomic::text, credit_micros, status, tx_hash, created_at
-		FROM crypto_deposits WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`, userID, recentLimit)
+		FROM crypto_deposits WHERE user_id = $1 AND chain = 'base' ORDER BY created_at DESC LIMIT $2`, userID, recentLimit)
 	if err != nil {
 		return info, err
 	}
@@ -221,8 +221,8 @@ func (d *Deposits) Quote(ctx context.Context, userID uuid.UUID, usdMicros int64)
 		DepositAddr: addr,
 	}
 	err = d.DB.QueryRow(ctx, `
-		INSERT INTO eth_quotes (user_id, usd_micros, amount_wei, rate_micros, expires_at)
-		VALUES ($1, $2, $3::numeric, $4, $5) RETURNING id`,
+		INSERT INTO crypto_quotes (user_id, asset, usd_micros, amount_atomic, rate_micros, expires_at)
+		VALUES ($1, 'eth', $2, $3::numeric, $4, $5) RETURNING id`,
 		userID, q.USDMicros, q.AmountWei, q.RateMicros, q.ExpiresAt).Scan(&q.ID)
 	return q, err
 }
@@ -426,8 +426,8 @@ func (d *Deposits) scanETH(ctx context.Context, safe int64, full bool) error {
 		// stays hot until it expires, then falls back to the slow scan. Using
 		// created_at here would keep every address created in the window hot
 		// for hours after the quote was abandoned.
-		q += ` AND EXISTS (SELECT 1 FROM eth_quotes q WHERE q.user_id = deposit_addresses.user_id
-			AND q.status = 'open' AND q.expires_at + make_interval(secs => $1) > now())`
+		q += ` AND EXISTS (SELECT 1 FROM crypto_quotes q WHERE q.user_id = deposit_addresses.user_id
+			AND q.asset = 'eth' AND q.status = 'open' AND q.expires_at + make_interval(secs => $1) > now())`
 		args = append(args, quoteSlack.Seconds())
 	}
 	rows, err := d.DB.Query(ctx, q, args...)
@@ -500,8 +500,8 @@ func (d *Deposits) creditETH(ctx context.Context, userID uuid.UUID, bal *big.Int
 			quoteRt  int64
 		)
 		err := tx.QueryRow(ctx, `
-			SELECT id, usd_micros, amount_wei::text, rate_micros FROM eth_quotes
-			WHERE user_id = $1 AND status = 'open' AND expires_at + make_interval(secs => $2) > now()
+			SELECT id, usd_micros, amount_atomic::text, rate_micros FROM crypto_quotes
+			WHERE user_id = $1 AND asset = 'eth' AND status = 'open' AND expires_at + make_interval(secs => $2) > now()
 			ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, userID, quoteSlack.Seconds()).
 			Scan(&quoteID, &quoteUSD, &quoteWei, &quoteRt)
 		hasQuote := err == nil
@@ -537,7 +537,7 @@ func (d *Deposits) creditETH(ctx context.Context, userID uuid.UUID, bal *big.Int
 		var quoteArg any
 		if hasQuote {
 			quoteArg = quoteID
-			if _, err := tx.Exec(ctx, `UPDATE eth_quotes SET status = 'credited' WHERE id = $1`, quoteID); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE crypto_quotes SET status = 'credited' WHERE id = $1`, quoteID); err != nil {
 				return err
 			}
 		}

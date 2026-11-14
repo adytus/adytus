@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/reaganiwadha/adytus/apps/api/internal/errs"
 )
@@ -36,15 +37,21 @@ type VoucherReport struct {
 	BonusMicros int64     `json:"bonus_micros"`
 }
 
+// Vouchers are the discount codes. They apply to top-ups on every chain, so
+// they work whichever payment method is switched on.
+type Vouchers struct {
+	DB *pgxpool.Pool
+}
+
 func normalizeCode(code string) string {
 	return strings.ToUpper(strings.TrimSpace(code))
 }
 
 // ClaimVoucher applies a code to the user's deposits, replacing any other.
-func (d *Deposits) ClaimVoucher(ctx context.Context, userID uuid.UUID, code string) (Voucher, error) {
+func (vs *Vouchers) ClaimVoucher(ctx context.Context, userID uuid.UUID, code string) (Voucher, error) {
 	var id uuid.UUID
 	var v Voucher
-	err := d.DB.QueryRow(ctx, `
+	err := vs.DB.QueryRow(ctx, `
 		SELECT id, code, percent, expires_at FROM vouchers WHERE code = $1 AND expires_at > now()`,
 		normalizeCode(code)).Scan(&id, &v.Code, &v.Percent, &v.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -53,21 +60,21 @@ func (d *Deposits) ClaimVoucher(ctx context.Context, userID uuid.UUID, code stri
 	if err != nil {
 		return v, err
 	}
-	_, err = d.DB.Exec(ctx, `
+	_, err = vs.DB.Exec(ctx, `
 		INSERT INTO voucher_claims (user_id, voucher_id) VALUES ($1, $2)
 		ON CONFLICT (user_id) DO UPDATE SET voucher_id = EXCLUDED.voucher_id, created_at = now()`, userID, id)
 	return v, err
 }
 
-func (d *Deposits) RemoveVoucher(ctx context.Context, userID uuid.UUID) error {
-	_, err := d.DB.Exec(ctx, `DELETE FROM voucher_claims WHERE user_id = $1`, userID)
+func (vs *Vouchers) RemoveVoucher(ctx context.Context, userID uuid.UUID) error {
+	_, err := vs.DB.Exec(ctx, `DELETE FROM voucher_claims WHERE user_id = $1`, userID)
 	return err
 }
 
-// claimed is the unexpired voucher the user has applied, or nil.
-func (d *Deposits) claimed(ctx context.Context, userID uuid.UUID) (*Voucher, error) {
+// Claimed is the unexpired voucher the user has applied, or nil.
+func (vs *Vouchers) Claimed(ctx context.Context, userID uuid.UUID) (*Voucher, error) {
 	var v Voucher
-	err := d.DB.QueryRow(ctx, `
+	err := vs.DB.QueryRow(ctx, `
 		SELECT v.code, v.percent, v.expires_at
 		FROM voucher_claims c JOIN vouchers v ON v.id = c.voucher_id
 		WHERE c.user_id = $1 AND v.expires_at > now()`, userID).Scan(&v.Code, &v.Percent, &v.ExpiresAt)
@@ -113,7 +120,7 @@ func discountFor(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (discount, er
 }
 
 // CreateVoucher adds a code. Codes are stored upper-case and matched that way.
-func (d *Deposits) CreateVoucher(ctx context.Context, code string, percent int64, expires time.Time) error {
+func (vs *Vouchers) CreateVoucher(ctx context.Context, code string, percent int64, expires time.Time) error {
 	code = normalizeCode(code)
 	if !voucherCode.MatchString(code) {
 		return errs.Validation.New("codes are 3 to 32 letters, digits, dashes or underscores")
@@ -124,7 +131,7 @@ func (d *Deposits) CreateVoucher(ctx context.Context, code string, percent int64
 	if !expires.After(time.Now()) {
 		return errs.Validation.New("the expiry must be in the future")
 	}
-	tag, err := d.DB.Exec(ctx, `
+	tag, err := vs.DB.Exec(ctx, `
 		INSERT INTO vouchers (code, percent, expires_at) VALUES ($1, $2, $3)
 		ON CONFLICT (code) DO NOTHING`, code, percent, expires)
 	if err != nil {
@@ -138,8 +145,8 @@ func (d *Deposits) CreateVoucher(ctx context.Context, code string, percent int64
 
 // EndVoucher expires a voucher now. Payments already on their way still get
 // voucherGrace, as with any expiry.
-func (d *Deposits) EndVoucher(ctx context.Context, id uuid.UUID) error {
-	tag, err := d.DB.Exec(ctx, `UPDATE vouchers SET expires_at = now() WHERE id = $1 AND expires_at > now()`, id)
+func (vs *Vouchers) EndVoucher(ctx context.Context, id uuid.UUID) error {
+	tag, err := vs.DB.Exec(ctx, `UPDATE vouchers SET expires_at = now() WHERE id = $1 AND expires_at > now()`, id)
 	if err != nil {
 		return err
 	}
@@ -149,8 +156,8 @@ func (d *Deposits) EndVoucher(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (d *Deposits) VoucherReports(ctx context.Context) ([]VoucherReport, error) {
-	rows, err := d.DB.Query(ctx, `
+func (vs *Vouchers) VoucherReports(ctx context.Context) ([]VoucherReport, error) {
+	rows, err := vs.DB.Query(ctx, `
 		SELECT v.id, v.code, v.percent, v.expires_at, v.created_at, count(c.id),
 			COALESCE(SUM(c.credit_micros - c.bonus_micros), 0)::bigint, COALESCE(SUM(c.bonus_micros), 0)::bigint
 		FROM vouchers v LEFT JOIN crypto_deposits c ON c.voucher_id = v.id AND c.status = 'credited'

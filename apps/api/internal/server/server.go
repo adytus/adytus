@@ -29,6 +29,10 @@ type Deps struct {
 	LLM *llm.Registry
 	// Deposits takes USDC and ETH on Base; nil when crypto is not configured.
 	Deposits *billing.Deposits
+	// Near takes NEAR and USDC on NEAR, set in the backoffice. Vouchers
+	// discount top-ups on either chain. New fills both in from Store when unset.
+	Near     *billing.Near
+	Vouchers *billing.Vouchers
 	Sessions *session.Store
 	Blobs    blob.Store
 	Tools    *tools.Registry
@@ -58,6 +62,14 @@ type structValidator struct{ v *validator.Validate }
 func (s structValidator) Validate(out any) error { return s.v.Struct(out) }
 
 func New(d Deps) *Server {
+	if d.Store != nil {
+		if d.Near == nil {
+			d.Near = &billing.Near{DB: d.Store.DB, Ledger: d.Ledger}
+		}
+		if d.Vouchers == nil {
+			d.Vouchers = &billing.Vouchers{DB: d.Store.DB}
+		}
+	}
 	s := &Server{
 		Deps: d,
 		App: fiber.New(fiber.Config{
@@ -99,6 +111,8 @@ func (s *Server) routes() {
 	me.Get("/billing/ledger", s.ledgerHistory)
 	me.Get("/billing/crypto", s.cryptoInfo)
 	me.Post("/billing/crypto/quote", s.cryptoQuote)
+	me.Get("/billing/near", s.nearInfo)
+	me.Post("/billing/near/quote", s.nearQuote)
 	me.Post("/billing/voucher", limiter.New(limiter.Config{
 		Max:          voucherPerMinute,
 		Expiration:   time.Minute,

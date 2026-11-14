@@ -125,8 +125,77 @@ export type Voucher = {
 };
 export type VoucherList = { enabled: boolean; vouchers: Voucher[] };
 
+// NEAR payments, all set here; the server environment has no NEAR settings.
+export type NearSettings = {
+	enabled: boolean;
+	network: 'mainnet' | 'testnet';
+	rpc_url: string;
+	contract: string;
+	usdc: string;
+	price_url: string;
+	price_feed: string;
+	max_price_age_secs: number;
+	quote_ttl_secs: number;
+	min_micros: number;
+	dust_micros: number;
+	tolerance_bps: number;
+	poll_secs: number;
+	updated_at?: string;
+};
+export type NearPayment = {
+	index: number;
+	memo: string;
+	email: string;
+	asset: 'near' | 'usdc' | 'other';
+	token: string;
+	sender: string;
+	amount: string;
+	block_height: number;
+	at: string;
+	// unmatched: read, but no user owns the memo or the token isn't priced.
+	status: 'credited' | 'ignored' | 'pending' | 'unmatched';
+	credit_micros: number;
+};
+export type NearOverview = {
+	enabled: boolean;
+	network: string;
+	contract: string;
+	usdc: string;
+	near_usd_micros: number;
+	near_yocto: string;
+	storage_bytes: number;
+	usdc_micros: number;
+	balance_error?: string;
+	logged: number;
+	read: number;
+	credited_micros: number;
+	credited: number;
+	recent: NearPayment[];
+};
+export type NearState = { settings: NearSettings; overview: NearOverview };
+export type NearCheck = { name: string; ok: boolean; detail: string };
+
+export const nearRPCs: Record<NearSettings['network'], Endpoint[]> = {
+	mainnet: [
+		{ label: 'FastNEAR (free)', url: 'https://free.rpc.fastnear.com' },
+		{ label: 'NEAR (rate limited)', url: 'https://rpc.mainnet.near.org' }
+	],
+	testnet: [
+		{ label: 'FastNEAR (free)', url: 'https://test.rpc.fastnear.com' },
+		{ label: 'NEAR (rate limited)', url: 'https://rpc.testnet.near.org' }
+	]
+};
+export const nearUSDC: Record<NearSettings['network'], string> = {
+	mainnet: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+	testnet: '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af'
+};
+
 export const api = {
 	state: () => call<State>('GET', ''),
+	near: () => call<NearState>('GET', '/near'),
+	putNear: (s: NearSettings) => call<NearState>('PUT', '/near/settings', s),
+	// Tests the settings as given, saved or not.
+	testNear: (s: NearSettings) => call<{ checks: NearCheck[] }>('POST', '/near/test', s),
 	vouchers: () => call<VoucherList>('GET', '/vouchers'),
 	createVoucher: (code: string, percent: number, expires_at: string) =>
 		call<VoucherList>('POST', '/vouchers', { code, percent, expires_at }),

@@ -89,6 +89,8 @@ func run() error {
 	if deposits != nil {
 		go deposits.Run(ctx)
 	}
+	// NEAR payments are switched on in the backoffice; the watcher idles until then.
+	go srv.Near.Run(ctx)
 
 	go func() {
 		<-ctx.Done()

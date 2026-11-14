@@ -362,19 +362,19 @@ func TestVoucherDeposits(t *testing.T) {
 	ctx := context.Background()
 	e.tick(t, 1000)
 
-	if _, err := e.d.ClaimVoucher(ctx, e.user, "SOCIAL50"); err == nil {
+	if _, err := (&Vouchers{DB: e.d.DB}).ClaimVoucher(ctx, e.user, "SOCIAL50"); err == nil {
 		t.Fatal("claimed a code that doesn't exist")
 	}
-	if err := e.d.CreateVoucher(ctx, "Social50", 50, time.Now().Add(time.Hour)); err != nil {
+	if err := (&Vouchers{DB: e.d.DB}).CreateVoucher(ctx, "Social50", 50, time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.d.CreateVoucher(ctx, "SOCIAL50", 10, time.Now().Add(time.Hour)); err == nil {
+	if err := (&Vouchers{DB: e.d.DB}).CreateVoucher(ctx, "SOCIAL50", 10, time.Now().Add(time.Hour)); err == nil {
 		t.Fatal("created a duplicate code")
 	}
-	if err := e.d.CreateVoucher(ctx, "FREE", 100, time.Now().Add(time.Hour)); err == nil {
+	if err := (&Vouchers{DB: e.d.DB}).CreateVoucher(ctx, "FREE", 100, time.Now().Add(time.Hour)); err == nil {
 		t.Fatal("created a 100% voucher")
 	}
-	if _, err := e.d.ClaimVoucher(ctx, e.user, " social50 "); err != nil {
+	if _, err := (&Vouchers{DB: e.d.DB}).ClaimVoucher(ctx, e.user, " social50 "); err != nil {
 		t.Fatal(err)
 	}
 	info, err := e.d.Info(ctx, e.user)
@@ -402,7 +402,7 @@ func TestVoucherDeposits(t *testing.T) {
 		t.Fatalf("credit = %d, want $40", got)
 	}
 
-	reports, err := e.d.VoucherReports(ctx)
+	reports, err := (&Vouchers{DB: e.d.DB}).VoucherReports(ctx)
 	if err != nil || len(reports) != 1 {
 		t.Fatalf("reports = %+v, %v", reports, err)
 	}
@@ -412,7 +412,7 @@ func TestVoucherDeposits(t *testing.T) {
 	}
 
 	// Removed: full price again.
-	if err := e.d.RemoveVoucher(ctx, e.user); err != nil {
+	if err := (&Vouchers{DB: e.d.DB}).RemoveVoucher(ctx, e.user); err != nil {
 		t.Fatal(err)
 	}
 	e.chain.usdcTransfer(e.addr, 5*MicrosPerUSD, 1021, "0xtx3", 0)
@@ -422,13 +422,13 @@ func TestVoucherDeposits(t *testing.T) {
 	}
 
 	// Ended: a payment on its way keeps the discount, new claims are refused.
-	if _, err := e.d.ClaimVoucher(ctx, e.user, "SOCIAL50"); err != nil {
+	if _, err := (&Vouchers{DB: e.d.DB}).ClaimVoucher(ctx, e.user, "SOCIAL50"); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.d.EndVoucher(ctx, r.ID); err != nil {
+	if err := (&Vouchers{DB: e.d.DB}).EndVoucher(ctx, r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.d.ClaimVoucher(ctx, e.user, "SOCIAL50"); err == nil {
+	if _, err := (&Vouchers{DB: e.d.DB}).ClaimVoucher(ctx, e.user, "SOCIAL50"); err == nil {
 		t.Fatal("claimed an ended voucher")
 	}
 	if info, _ := e.d.Info(ctx, e.user); info.Voucher != nil {

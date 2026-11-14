@@ -35,6 +35,9 @@ func (s *Server) backofficeRoutes(me fiber.Router) {
 	bo.Get("/vouchers", s.backofficeVouchers)
 	bo.Post("/vouchers", s.createVoucher)
 	bo.Post("/vouchers/:id/end", s.endVoucher)
+	bo.Get("/near", s.backofficeNear)
+	bo.Put("/near/settings", s.putNearSettings)
+	bo.Post("/near/test", s.testNearSettings)
 	bo.Put("/providers/:id", s.putProvider)
 	bo.Post("/providers/:id/test", s.testProvider)
 	bo.Get("/providers/:id/offers", s.providerOffers)
@@ -529,20 +532,17 @@ func (s *Server) backofficeCrypto(c fiber.Ctx) error {
 
 // backofficeVouchers lists the discount codes and what each has cost.
 func (s *Server) backofficeVouchers(c fiber.Ctx) error {
-	if s.Deposits == nil {
-		return c.JSON(fiber.Map{"enabled": false, "vouchers": []billing.VoucherReport{}})
-	}
-	v, err := s.Deposits.VoucherReports(c.Context())
+	v, err := s.Vouchers.VoucherReports(c.Context())
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"enabled": true, "vouchers": v})
+	if v == nil {
+		v = []billing.VoucherReport{}
+	}
+	return c.JSON(fiber.Map{"enabled": s.paymentsOn(c.Context()), "vouchers": v})
 }
 
 func (s *Server) createVoucher(c fiber.Ctx) error {
-	if s.Deposits == nil {
-		return errs.NotFound.New("crypto payments are not enabled")
-	}
 	var req struct {
 		Code      string    `json:"code" validate:"required,max=64"`
 		Percent   int64     `json:"percent" validate:"required"`
@@ -551,22 +551,57 @@ func (s *Server) createVoucher(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return err
 	}
-	if err := s.Deposits.CreateVoucher(c.Context(), req.Code, req.Percent, req.ExpiresAt); err != nil {
+	if err := s.Vouchers.CreateVoucher(c.Context(), req.Code, req.Percent, req.ExpiresAt); err != nil {
 		return err
 	}
 	return s.backofficeVouchers(c)
 }
 
 func (s *Server) endVoucher(c fiber.Ctx) error {
-	if s.Deposits == nil {
-		return errs.NotFound.New("crypto payments are not enabled")
-	}
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return errs.NotFound.New("no voucher with that id")
 	}
-	if err := s.Deposits.EndVoucher(c.Context(), id); err != nil {
+	if err := s.Vouchers.EndVoucher(c.Context(), id); err != nil {
 		return err
 	}
 	return s.backofficeVouchers(c)
+}
+
+// backofficeNear is NEAR payments' settings and what the contract holds. The
+// contract is read on each call.
+func (s *Server) backofficeNear(c fiber.Ctx) error {
+	settings, err := s.Near.Settings(c.Context())
+	if err != nil {
+		return err
+	}
+	o, err := s.Near.Overview(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"settings": settings, "overview": o})
+}
+
+func (s *Server) putNearSettings(c fiber.Ctx) error {
+	var req billing.NearSettings
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	if _, err := s.Near.SaveSettings(c.Context(), req, mustAuth(c).UserID); err != nil {
+		return err
+	}
+	return s.backofficeNear(c)
+}
+
+// testNearSettings checks settings, saved or not, against the chain.
+func (s *Server) testNearSettings(c fiber.Ctx) error {
+	var req billing.NearSettings
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	checks, err := s.Near.Check(c.Context(), req)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"checks": checks})
 }

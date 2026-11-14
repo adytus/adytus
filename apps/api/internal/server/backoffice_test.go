@@ -220,3 +220,57 @@ func TestBackofficeUserUsage(t *testing.T) {
 		t.Fatalf("usage = %v", u)
 	}
 }
+
+func TestNearPaymentsFromBackoffice(t *testing.T) {
+	e := newEnv(t)
+	e.signup("admin@example.com")
+
+	// Off by default: no NEAR for users, and no vouchers with nothing to pay with.
+	out := e.must(200, "GET", "/api/billing/near", nil)
+	if out["enabled"] != false {
+		t.Fatalf("near enabled = %v", out["enabled"])
+	}
+	e.must(404, "POST", "/api/billing/near/quote", map[string]any{"usd_micros": 10_000_000})
+	e.must(404, "POST", "/api/billing/voucher", map[string]any{"code": "NOPE"})
+
+	// Only admins see the settings.
+	e.must(404, "GET", "/api/backoffice/near", nil)
+	e.makeAdmin("admin@example.com")
+	state := e.must(200, "GET", "/api/backoffice/near", nil)
+	s := state["settings"].(map[string]any)
+	if s["enabled"] != false || s["network"] != "mainnet" || s["contract"] != "" {
+		t.Fatalf("default settings %v", s)
+	}
+
+	// Saved while off, nothing is asked of the chain.
+	s["contract"] = "Pay.Adytus.Near"
+	s["poll_secs"] = 9
+	state = e.must(200, "PUT", "/api/backoffice/near/settings", s)
+	s = state["settings"].(map[string]any)
+	if s["contract"] != "pay.adytus.near" || s["poll_secs"] != float64(9) {
+		t.Fatalf("saved settings %v", s)
+	}
+
+	// Bad values are refused.
+	bad := map[string]any{}
+	for k, v := range s {
+		bad[k] = v
+	}
+	bad["tolerance_bps"] = 5_000
+	e.must(400, "PUT", "/api/backoffice/near/settings", bad)
+
+	// Switching on checks the RPC first; this one doesn't answer.
+	s["enabled"] = true
+	s["rpc_url"] = "http://127.0.0.1:1"
+	s["price_url"] = "http://127.0.0.1:1"
+	e.must(400, "PUT", "/api/backoffice/near/settings", s)
+	if out := e.must(200, "GET", "/api/billing/near", nil); out["enabled"] != false {
+		t.Fatal("NEAR switched on against a dead RPC")
+	}
+
+	// The test reports each check rather than failing.
+	checks := e.must(200, "POST", "/api/backoffice/near/test", s)["checks"].([]any)
+	if len(checks) == 0 || checks[0].(map[string]any)["ok"] != false {
+		t.Fatalf("checks %v", checks)
+	}
+}

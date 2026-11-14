@@ -54,7 +54,7 @@
 
 <section aria-labelledby="pay-h">
 	<div class="row">
-		<h2 id="pay-h">Payments</h2>
+		<h2 id="pay-h">Base</h2>
 		<button class="btn" disabled={busy} onclick={load}>{busy ? 'Reading the chain…' : 'Refresh'}</button>
 	</div>
 	<p class="muted">
@@ -68,8 +68,8 @@
 	{#if busy && !data}
 		<p class="muted">Loading…</p>
 	{:else if data && !data.enabled}
-		<Alert tone="info" title="Crypto payments are off">
-			<p>Set BASE_RPC_URL and BASE_XPUB on the server to turn them on.</p>
+		<Alert tone="info" title="Base payments are off">
+			<p>Set BASE_RPC_URL and BASE_XPUB on the server to turn them on. NEAR payments, below, are set here instead.</p>
 		</Alert>
 	{:else if data}
 		<dl class="stats">
