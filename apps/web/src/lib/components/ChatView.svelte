@@ -92,7 +92,7 @@
 		if (rs.every((r) => r.status === 'verified')) {
 			return {
 				tone: 'ok',
-				text: 'Signed in TEE',
+				text: 'Verified in TEE',
 				title: `NEAR AI's enclave key ${signer} signed ${calls}, and the signed hashes match the exact request and response bytes.`,
 				short
 			};
@@ -591,6 +591,9 @@
 								<span class="signed {r.tone}" title={r.title}>
 									{r.tone === 'ok' ? '✓' : r.tone === 'bad' ? '✕' : '·'} {r.text}{#if r.short}&nbsp;<code>{r.short}</code>{/if}
 								</span>
+								{#if r.tone === 'ok'}
+									<a class="proof" href="/verify/{m.id}" target="_blank" rel="noopener">🔗 Proof</a>
+								{/if}
 							{/if}
 						</p>
 					</article>
@@ -932,6 +935,14 @@
 		font-size: 0.75rem;
 		color: var(--muted);
 		font-variant-numeric: tabular-nums;
+	}
+	.proof {
+		color: var(--line-green);
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.proof:hover {
+		text-decoration: underline;
 	}
 	.fare {
 		color: var(--line-yellow);

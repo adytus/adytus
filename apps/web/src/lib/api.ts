@@ -127,6 +127,28 @@ export type Tool = {
 };
 // python marks a file the model isn't shown but its file tools can open.
 export type Attachment = { id: string; name: string; image?: boolean; python?: boolean };
+// The public proof for one reply: each model call's receipt, re-checked.
+export type VerifyCheck = { ok: boolean; detail: string };
+export type VerifyReceipt = {
+	seq: number;
+	model: string;
+	completion_id: string;
+	request_sha256: string;
+	response_sha256: string;
+	signed_text: string;
+	signature: string;
+	signing_address: string;
+	status: 'verified' | 'mismatch' | 'unavailable';
+	created_at: string;
+	checks: {
+		signature: VerifyCheck;
+		attested: VerifyCheck;
+		hashes: VerifyCheck;
+		report_nonce?: string;
+		report_fetched_at?: string;
+	};
+};
+export type VerifyResult = { message_id: string; receipts: VerifyReceipt[] };
 // NEAR AI's signature over one model call behind a reply, and whether it
 // checked out against the bytes the server actually sent and received.
 export type InferenceReceipt = {
@@ -253,6 +275,8 @@ export const api = {
 	chats: () => get<{ chats: Chat[] }>('/api/chats'),
 	createChat: (model?: string) => call<{ chat: Chat }>('POST', '/api/chats', { model }),
 	chat: (id: string) => get<{ chat: Chat; messages: Message[] }>(`/api/chats/${id}`),
+	// Public: no session needed, and it carries no chat content.
+	verify: (messageID: string) => get<VerifyResult>(`/api/verify/${messageID}`),
 	receipts: (chatID: string) => get<{ receipts: InferenceReceipt[] }>(`/api/chats/${chatID}/receipts`),
 	updateChat: (id: string, patch: { title?: string; model?: string }) =>
 		call<{ chat: Chat }>('PATCH', `/api/chats/${id}`, patch),
