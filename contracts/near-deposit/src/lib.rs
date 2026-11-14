@@ -181,7 +181,7 @@ mod tests {
     fn refuses_other_tokens() {
         let mut c = contract();
         ctx(accounts(3), NearToken::from_yoctonear(0));
-        c.ft_on_transfer(accounts(2), U128(5_000_000), "abc".into());
+        let _ = c.ft_on_transfer(accounts(2), U128(5_000_000), "abc".into());
     }
 
     #[test]
