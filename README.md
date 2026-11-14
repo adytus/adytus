@@ -6,7 +6,7 @@ The private AI workspace where your data stays sealed. Chats and files are encry
 
 ## Live demo
 
-URL: [adytus.ai](https://adytus.ai) · login: `testuser@test.com` / `testuserpassword` · NEAR contract: [`adytus-pay.testnet`](https://testnet.nearblocks.io/address/adytus-pay.testnet) (testnet)
+URL: [adytus.ai](https://adytus.ai)  login: `testuser@test.com` / `testuserpassword`  NEAR contract: [`adytus-pay.testnet`](https://testnet.nearblocks.io/address/adytus-pay.testnet) (testnet)
 
 ## Built at NEAR Hackathon
 
