@@ -16,7 +16,8 @@ URL: [adytus.ai](https://adytus.ai) · login: `testuser@test.com` / `testuserpas
   - `cdba227`: private-inference notice in the chat
   - `5df0b85`: NEAR AI note on sealed attachments
   - `82ce498`: NEAR and USDC payments, plus our own deposit contract, [`contracts/near-deposit`](contracts/near-deposit)
-  - `a8e0430`: signed inference receipts. NEAR AI's per-answer signature is checked against the exact request and response bytes (built; being verified against NEAR AI's live API)
+  - `a8e0430`, `83acef4`: signed inference receipts. NEAR AI's per-answer signature is checked against the exact request and response bytes
+  - `1aecfec`, `940c461`: public proof page (`/verify/<reply id>`) and a CLI that checks a reply's receipts without trusting our server
 - **How NEAR fits:** open-weight models run in Intel TDX and NVIDIA confidential-computing TEEs on NEAR AI Cloud, so the host can't read prompts. Top-ups go through our own NEAR contract: users pay NEAR or USDC with a personal memo, and the API reads the contract's payment log to credit them.
 
 ## Quickstart with NEAR AI
@@ -30,6 +31,23 @@ MODELS_FILE=models.nearai.json
 ```
 
 Then follow [Running locally](#running-locally). To take payments on NEAR, deploy [`contracts/near-deposit`](contracts/near-deposit) (its README has the commands) and set it up in the backoffice under **Payments → NEAR**.
+
+## Verify it yourself
+
+Every reply from a private (TEE) model shows **✓ Verified in TEE** with a **Proof** link. The proof page at `/verify/<reply id>` is public and holds no chat content, only hashes and signatures. It runs three checks:
+
+1. **Signature valid:** the signer recovered from NEAR AI's signature is the stated enclave key.
+2. **Signer matches attested TEE key:** that key is in NEAR AI's attestation report, and its Intel TDX quote commits to the key and to a fresh nonce we chose.
+3. **Hashes match:** the signed text is the SHA-256 of the exact request and response bytes.
+
+To check without trusting our server, run the CLI. It recovers the signer locally and fetches the attestation report from NEAR AI directly, with its own nonce:
+
+```sh
+cd apps/api
+go run ./cmd/verify https://adytus.ai <reply id>
+```
+
+It prints each check and ends with `PASS` or `FAIL`. For the full Intel and NVIDIA certificate chains, run the report through [NEAR AI's verifier](https://github.com/nearai/nearai-cloud-verifier).
 
 ## Docs
 
