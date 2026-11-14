@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -31,6 +32,8 @@ func (s *Server) backofficeRoutes(me fiber.Router) {
 	bo := me.Group("/backoffice", s.requireAdmin)
 	bo.Get("", s.backofficeState)
 	bo.Get("/users", s.backofficeUsers)
+	bo.Post("/users/:id/credit", s.adjustCredit)
+	bo.Put("/users/:id/cap", s.putDailyCap)
 	bo.Get("/crypto", s.backofficeCrypto)
 	bo.Get("/vouchers", s.backofficeVouchers)
 	bo.Post("/vouchers", s.createVoucher)
@@ -256,7 +259,10 @@ type adminUserView struct {
 	PurchasedTokens  int64 `json:"purchased_tokens"`
 	UsedTokens       int64 `json:"used_tokens"`
 	SpentTodayTokens int64 `json:"spent_today_tokens"`
-	DailyCapTokens   int64 `json:"daily_cap_tokens"`
+	// DailyCapTokens is the cap that applies (0: none). OwnCapTokens is the
+	// user's own, or null when the server default applies.
+	DailyCapTokens int64  `json:"daily_cap_tokens"`
+	OwnCapTokens   *int64 `json:"own_cap_tokens"`
 
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
@@ -269,10 +275,15 @@ func (s *Server) backofficeUsers(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	capTokens := billing.Tokens(s.Ledger.DailyCapMicros)
 	users := make([]adminUserView, 0, len(rows))
 	for _, u := range rows {
 		available := u.CreditMicros - u.HeldMicros
+		capTokens := billing.Tokens(s.Ledger.DailyCapMicros)
+		var own *int64
+		if u.DailyCapMicros.Valid {
+			t := billing.Tokens(u.DailyCapMicros.Int64)
+			capTokens, own = t, &t
+		}
 		users = append(users, adminUserView{
 			ID:               u.ID,
 			Email:            u.Email,
@@ -284,6 +295,7 @@ func (s *Server) backofficeUsers(c fiber.Ctx) error {
 			UsedTokens:       billing.Tokens(u.UsedMicros),
 			SpentTodayTokens: billing.Tokens(u.SpentTodayMicros),
 			DailyCapTokens:   capTokens,
+			OwnCapTokens:     own,
 			PromptTokens:     u.PromptTokens,
 			CompletionTokens: u.CompletionTokens,
 			Requests:         u.Requests,
@@ -604,4 +616,58 @@ func (s *Server) testNearSettings(c fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(fiber.Map{"checks": checks})
+}
+
+func userParam(c fiber.Ctx) (uuid.UUID, error) {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return uuid.Nil, errs.NotFound.New("no user with that id")
+	}
+	return id, nil
+}
+
+// adjustCredit gives or takes a user's credit by hand, in tokens.
+func (s *Server) adjustCredit(c fiber.Ctx) error {
+	id, err := userParam(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Tokens int64  `json:"tokens"`
+		Note   string `json:"note" validate:"required,max=200"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	if _, err := s.Store.UserByID(c.Context(), id); err != nil {
+		return err
+	}
+	if err := s.Ledger.Adjust(c.Context(), id, mustAuth(c).UserID, req.Tokens*billing.MicrosPerToken, strings.TrimSpace(req.Note)); err != nil {
+		return err
+	}
+	return s.backofficeUsers(c)
+}
+
+// putDailyCap sets a user's own daily cap in tokens: null for the server's,
+// 0 for none.
+func (s *Server) putDailyCap(c fiber.Ctx) error {
+	id, err := userParam(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Tokens *int64 `json:"tokens"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	var micros *int64
+	if req.Tokens != nil {
+		m := *req.Tokens * billing.MicrosPerToken
+		micros = &m
+	}
+	if err := s.Ledger.SetDailyCap(c.Context(), id, micros); err != nil {
+		return err
+	}
+	return s.backofficeUsers(c)
 }

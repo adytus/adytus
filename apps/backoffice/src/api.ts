@@ -57,6 +57,8 @@ export type UserUsage = {
 	used_tokens: number;
 	spent_today_tokens: number;
 	daily_cap_tokens: number;
+	// The user's own cap; null when the server default applies, 0 for none.
+	own_cap_tokens: number | null;
 	prompt_tokens: number;
 	completion_tokens: number;
 	requests: number;
@@ -203,6 +205,11 @@ export const api = {
 		call<VoucherList>('POST', '/vouchers', { code, percent, expires_at }),
 	endVoucher: (id: string) => call<VoucherList>('POST', `/vouchers/${id}/end`),
 	users: () => call<{ users: UserUsage[] }>('GET', '/users'),
+	// tokens > 0 gives, < 0 takes.
+	adjustCredit: (id: string, tokens: number, note: string) =>
+		call<{ users: UserUsage[] }>('POST', `/users/${id}/credit`, { tokens, note }),
+	// null: server default; 0: no cap.
+	setDailyCap: (id: string, tokens: number | null) => call<{ users: UserUsage[] }>('PUT', `/users/${id}/cap`, { tokens }),
 	crypto: () => call<CryptoOverview>('GET', '/crypto'),
 	// api_key: undefined keeps the saved key, '' clears it.
 	putProvider: (id: string, base_url: string, api_key?: string) =>

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -272,5 +273,84 @@ func TestNearPaymentsFromBackoffice(t *testing.T) {
 	checks := e.must(200, "POST", "/api/backoffice/near/test", s)["checks"].([]any)
 	if len(checks) == 0 || checks[0].(map[string]any)["ok"] != false {
 		t.Fatalf("checks %v", checks)
+	}
+}
+
+func TestBackofficeCreditAndCap(t *testing.T) {
+	e := newEnv(t)
+	e.signup("member@example.com")
+	member := e.userID(t).String()
+	chatID := e.must(201, "POST", "/api/chats", map[string]string{"model": "pricey"})["chat"].(map[string]any)["id"].(string)
+	e.must(204, "POST", "/api/auth/logout", nil)
+	e.signup("admin@example.com")
+	admin := e.userID(t).String()
+
+	// Only admins.
+	e.must(404, "POST", "/api/backoffice/users/"+member+"/credit", map[string]any{"tokens": 1000, "note": "x"})
+	e.makeAdmin("admin@example.com")
+
+	find := func(users []any, id string) map[string]any {
+		for _, u := range users {
+			if m := u.(map[string]any); m["id"] == id {
+				return m
+			}
+		}
+		t.Fatalf("user %s not listed", id)
+		return nil
+	}
+
+	// Give 20,000 tokens ($20).
+	users := e.must(200, "POST", "/api/backoffice/users/"+member+"/credit", map[string]any{"tokens": 20_000, "note": "demo account"})["users"].([]any)
+	if got := num(find(users, member)["available_tokens"]); got != 20_000 {
+		t.Fatalf("available %d", got)
+	}
+	// Taking more than they have is refused; taking some works.
+	e.must(400, "POST", "/api/backoffice/users/"+member+"/credit", map[string]any{"tokens": -30_000, "note": "too much"})
+	e.must(400, "POST", "/api/backoffice/users/"+member+"/credit", map[string]any{"tokens": 0, "note": "nothing"})
+	e.must(400, "POST", "/api/backoffice/users/"+member+"/credit", map[string]any{"tokens": 10})
+	users = e.must(200, "POST", "/api/backoffice/users/"+member+"/credit", map[string]any{"tokens": -5_000, "note": "correction"})["users"].([]any)
+	if got := num(find(users, member)["available_tokens"]); got != 15_000 {
+		t.Fatalf("available after taking %d", got)
+	}
+	var note, by string
+	_ = e.pool.QueryRow(context.Background(), `
+		SELECT note, created_by::text FROM credit_ledger WHERE reason = 'adjustment' ORDER BY id DESC LIMIT 1`).Scan(&note, &by)
+	if note != "correction" || by != admin {
+		t.Fatalf("audit: %q by %s", note, by)
+	}
+
+	// A cap of their own: 10 tokens blocks a request, 0 lifts any cap,
+	// null returns them to the server's.
+	e.srv.Ledger.DailyCapMicros = 0
+	users = e.must(200, "PUT", "/api/backoffice/users/"+member+"/cap", map[string]any{"tokens": 10})["users"].([]any)
+	if m := find(users, member); num(m["daily_cap_tokens"]) != 10 || num(m["own_cap_tokens"]) != 10 {
+		t.Fatalf("cap %v", m)
+	}
+	e.must(400, "PUT", "/api/backoffice/users/"+member+"/cap", map[string]any{"tokens": -1})
+
+	e.must(204, "POST", "/api/auth/logout", nil)
+	e.must(200, "POST", "/api/auth/login", map[string]string{"email": "member@example.com", "password": "correct horse battery"})
+	if b := e.must(200, "GET", "/api/billing/balance", nil)["balance"].(map[string]any); num(b["daily_cap_tokens"]) != 10 {
+		t.Fatalf("member sees cap %v", b["daily_cap_tokens"])
+	}
+	if status, _ := e.sendMessage(chatID, "hi"); status != http.StatusPaymentRequired {
+		t.Fatalf("own cap didn't hold: %d", status)
+	}
+	e.must(204, "POST", "/api/auth/logout", nil)
+	e.must(200, "POST", "/api/auth/login", map[string]string{"email": "admin@example.com", "password": "correct horse battery"})
+
+	e.srv.Ledger.DailyCapMicros = 40_000 // a server cap that would block it too
+	e.must(200, "PUT", "/api/backoffice/users/"+member+"/cap", map[string]any{"tokens": 0})
+	e.must(204, "POST", "/api/auth/logout", nil)
+	e.must(200, "POST", "/api/auth/login", map[string]string{"email": "member@example.com", "password": "correct horse battery"})
+	if status, ev := e.sendMessage(chatID, "hi"); status != 200 || last(ev).Name != "done" {
+		t.Fatalf("no cap should let it through: %d", status)
+	}
+	e.must(204, "POST", "/api/auth/logout", nil)
+	e.must(200, "POST", "/api/auth/login", map[string]string{"email": "admin@example.com", "password": "correct horse battery"})
+
+	users = e.must(200, "PUT", "/api/backoffice/users/"+member+"/cap", map[string]any{"tokens": nil})["users"].([]any)
+	if m := find(users, member); m["own_cap_tokens"] != nil || num(m["daily_cap_tokens"]) != 40 {
+		t.Fatalf("back to default %v", m)
 	}
 }

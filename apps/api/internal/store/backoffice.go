@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/guregu/null/v6"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/reaganiwadha/adytus/apps/api/internal/errs"
@@ -152,6 +153,8 @@ type AdminUser struct {
 	PurchasedMicros  int64
 	UsedMicros       int64
 	SpentTodayMicros int64
+	// DailyCapMicros is the user's own cap; invalid means the server's.
+	DailyCapMicros   null.Int
 	PromptTokens     int64
 	CompletionTokens int64
 	Requests         int64
@@ -159,7 +162,7 @@ type AdminUser struct {
 
 func Users(ctx context.Context, q DBTX) ([]AdminUser, error) {
 	rows, err := q.Query(ctx, `
-		SELECT u.id, u.email, u.is_admin, u.created_at,
+		SELECT u.id, u.email, u.is_admin, u.created_at, u.daily_cap_micros,
 			COALESCE(l.credit_micros, 0), COALESCE(h.held_micros, 0),
 			COALESCE(l.purchased_micros, 0), COALESCE(l.used_micros, 0),
 			COALESCE(l.spent_today_micros, 0), COALESCE(l.prompt_tokens, 0),
@@ -189,7 +192,7 @@ func Users(ctx context.Context, q DBTX) ([]AdminUser, error) {
 	out := []AdminUser{}
 	for rows.Next() {
 		var u AdminUser
-		if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.CreatedAt,
+		if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.CreatedAt, &u.DailyCapMicros,
 			&u.CreditMicros, &u.HeldMicros, &u.PurchasedMicros, &u.UsedMicros,
 			&u.SpentTodayMicros, &u.PromptTokens, &u.CompletionTokens, &u.Requests); err != nil {
 			return nil, err

@@ -8,6 +8,7 @@
 	import Payments from './Payments.svelte';
 	import NearPayments from './NearPayments.svelte';
 	import Vouchers from './Vouchers.svelte';
+	import UserManage from './UserManage.svelte';
 
 	let st = $state<State | null>(null);
 	let error = $state('');
@@ -22,6 +23,8 @@
 	let users = $state<UserUsage[] | null>(null);
 	let usersBusy = $state(false);
 	let usersError = $state('');
+	// The user whose credit and cap panel is open.
+	let managing = $state('');
 
 	$effect(() => {
 		api.state().then(
@@ -344,6 +347,7 @@
 									<th scope="col" class="num">Tokens in</th>
 									<th scope="col" class="num">Tokens out</th>
 									<th scope="col" class="num">Calls</th>
+									<th scope="col"><span class="sr-only">Manage</span></th>
 								</tr>
 							</thead>
 							<tbody>
@@ -359,11 +363,31 @@
 											{count(u.used_tokens)}
 											<span class="sub">{usd(u.used_micros)}</span>
 										</td>
-										<td class="num">{count(u.spent_today_tokens)} / {count(u.daily_cap_tokens)}</td>
+										<td class="num">
+											{count(u.spent_today_tokens)} / {u.daily_cap_tokens ? count(u.daily_cap_tokens) : 'no cap'}
+											{#if u.own_cap_tokens !== null}<span class="sub">own cap</span>{/if}
+										</td>
 										<td class="num">{count(u.prompt_tokens)}</td>
 										<td class="num">{count(u.completion_tokens)}</td>
 										<td class="num">{count(u.requests)}</td>
+										<td>
+											<button
+												class="btn"
+												type="button"
+												aria-expanded={managing === u.id}
+												onclick={() => (managing = managing === u.id ? '' : u.id)}
+											>
+												{managing === u.id ? 'Close' : 'Manage'}
+											</button>
+										</td>
 									</tr>
+									{#if managing === u.id}
+										<tr>
+											<td colspan="9">
+												<UserManage user={u} onchange={(list) => (users = list)} />
+											</td>
+										</tr>
+									{/if}
 								{/each}
 							</tbody>
 						</table>

@@ -62,7 +62,13 @@
 			<dl class="facts">
 				<div><dt>Left to spend</dt><dd>{tokenCount(b.available_tokens)} tokens</dd></div>
 				{#if b.held_tokens > 0}<div><dt>Held for a reply</dt><dd>{tokenCount(b.held_tokens)} tokens</dd></div>{/if}
-				<div><dt>Spent today</dt><dd>{tokenCount(b.spent_today_tokens)} of {tokenCount(b.daily_cap_tokens)} tokens</dd></div>
+				<div>
+					<dt>Spent today</dt>
+					<dd>
+						{#if b.daily_cap_tokens}{tokenCount(b.spent_today_tokens)} of {tokenCount(b.daily_cap_tokens)} tokens
+						{:else}{tokenCount(b.spent_today_tokens)} tokens, no daily cap{/if}
+					</dd>
+				</div>
 			</dl>
 		{:else}
 			<p class="muted">You don't have any tokens yet. Add some to start chatting.</p>
@@ -93,7 +99,7 @@
 								<td>{fmtDate(e.created_at)}</td>
 								<td>
 									{#if e.reason === 'usage'}{app.model(e.model ?? '')?.name ?? e.model}
-									{:else if e.reason === 'subscription'}Tokens added
+									{:else if e.reason === 'subscription' || e.delta_tokens > 0}Tokens added
 									{:else}Adjustment{/if}
 								</td>
 								<td class="num">{e.prompt_tokens?.toLocaleString() ?? ''}</td>

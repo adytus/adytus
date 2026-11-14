@@ -20,7 +20,8 @@ import (
 // a per-user row lock so concurrent requests cannot overspend.
 type Ledger struct {
 	DB *pgxpool.Pool
-	// DailyCapMicros limits usage per user per UTC day; 0 disables it.
+	// DailyCapMicros limits usage per user per UTC day; 0 disables it. A
+	// user's own users.daily_cap_micros, set in the backoffice, overrides it.
 	DailyCapMicros int64
 	HoldTTL        time.Duration
 }
@@ -69,15 +70,20 @@ type querier interface {
 
 func (l *Ledger) balance(ctx context.Context, q querier, userID uuid.UUID) (Balance, error) {
 	b := Balance{DailyCapMicros: l.DailyCapMicros}
+	var userCap null.Int
 	err := q.QueryRow(ctx, `
 		SELECT
+			(SELECT daily_cap_micros FROM users WHERE id = $1),
 			COALESCE((SELECT SUM(delta_micros) FROM credit_ledger WHERE user_id = $1), 0),
 			COALESCE((SELECT SUM(amount_micros) FROM credit_holds WHERE user_id = $1 AND expires_at > now()), 0),
 			COALESCE((SELECT -SUM(delta_micros) FROM credit_ledger
 				WHERE user_id = $1 AND reason = 'usage' AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), 0),
 			COALESCE((SELECT SUM(delta_micros) FROM credit_ledger WHERE user_id = $1 AND reason = 'subscription'), 0),
 			COALESCE((SELECT -SUM(delta_micros) FROM credit_ledger WHERE user_id = $1 AND reason = 'usage'), 0)`,
-		userID).Scan(&b.CreditMicros, &b.HeldMicros, &b.SpentTodayMicros, &b.PurchasedMicros, &b.UsedMicros)
+		userID).Scan(&userCap, &b.CreditMicros, &b.HeldMicros, &b.SpentTodayMicros, &b.PurchasedMicros, &b.UsedMicros)
+	if userCap.Valid {
+		b.DailyCapMicros = userCap.Int64
+	}
 	b.AvailableMicros = b.CreditMicros - b.HeldMicros
 	b.CreditTokens = Tokens(b.CreditMicros)
 	b.HeldTokens = Tokens(b.HeldMicros)
@@ -120,7 +126,7 @@ func (l *Ledger) Reserve(ctx context.Context, userID uuid.UUID, amount int64) (u
 		if b.AvailableMicros < amount {
 			return ErrNoCredit
 		}
-		if l.DailyCapMicros > 0 && b.SpentTodayMicros+b.HeldMicros+amount > l.DailyCapMicros {
+		if b.DailyCapMicros > 0 && b.SpentTodayMicros+b.HeldMicros+amount > b.DailyCapMicros {
 			return ErrDailyCapSpent
 		}
 		return tx.QueryRow(ctx, `
@@ -197,4 +203,48 @@ func (l *Ledger) History(ctx context.Context, userID uuid.UUID, limit int) ([]En
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+// MaxAdjustMicros bounds one admin adjustment ($10,000).
+const MaxAdjustMicros = 10_000 * MicrosPerUSD
+
+// Adjust gives (micros > 0) or takes (micros < 0) credit by hand, recording
+// why and who. Taking can't leave the user below zero.
+func (l *Ledger) Adjust(ctx context.Context, userID, by uuid.UUID, micros int64, note string) error {
+	if micros == 0 || micros > MaxAdjustMicros || micros < -MaxAdjustMicros {
+		return errs.Validation.New("an adjustment is between 1 and 10,000,000 tokens, up or down")
+	}
+	return pgx.BeginFunc(ctx, l.DB, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, userID); err != nil {
+			return err
+		}
+		if micros < 0 {
+			b, err := l.balance(ctx, tx, userID)
+			if err != nil {
+				return err
+			}
+			if b.AvailableMicros+micros < 0 {
+				return errs.Validation.New("they only have %d tokens available", b.AvailableTokens)
+			}
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO credit_ledger (user_id, delta_micros, reason, note, created_by)
+			VALUES ($1, $2, 'adjustment', $3, $4)`, userID, micros, note, by)
+		return err
+	})
+}
+
+// SetDailyCap sets a user's own daily cap; nil returns them to the server's.
+func (l *Ledger) SetDailyCap(ctx context.Context, userID uuid.UUID, micros *int64) error {
+	if micros != nil && (*micros < 0 || *micros > MaxAdjustMicros) {
+		return errs.Validation.New("a daily cap is between 0 (no cap) and 10,000,000 tokens")
+	}
+	tag, err := l.DB.Exec(ctx, `UPDATE users SET daily_cap_micros = $2 WHERE id = $1`, userID, micros)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errs.NotFound.New("no user with that id")
+	}
+	return nil
 }
