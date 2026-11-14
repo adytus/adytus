@@ -176,10 +176,20 @@
 				<span>
 					{data.settings.enabled
 						? `Users can pay with NEAR${data.settings.usdc ? ' and USDC' : ''} on ${data.settings.network}.`
-						: 'Users don’t see NEAR in Add tokens.'}
+						: data.settings.contract
+							? 'Users don’t see NEAR in Add tokens.'
+							: 'Deploy contracts/near-deposit, then save its account below to switch this on.'}
 				</span>
 			</div>
-			<button class="btn" class:primary={!data.settings.enabled} class:danger={data.settings.enabled} type="button" disabled={saving} onclick={toggle}>
+			<button
+				class="btn"
+				class:primary={!data.settings.enabled}
+				class:danger={data.settings.enabled}
+				type="button"
+				disabled={saving || (!data.settings.enabled && !data.settings.contract)}
+				title={!data.settings.enabled && !data.settings.contract ? 'Save a deposit contract first' : undefined}
+				onclick={toggle}
+			>
 				{data.settings.enabled ? 'Switch off' : 'Switch on'}
 			</button>
 		</div>
