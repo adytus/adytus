@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"testing/iotest"
+	"time"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
@@ -123,5 +126,66 @@ func TestCompletionID(t *testing.T) {
 		if got := completionID([]byte(in)); got != want {
 			t.Errorf("%q: got %q, want %q", in, got, want)
 		}
+	}
+}
+
+// wrapped runs capture against a fake upstream that answers with body.
+func wrapped(t *testing.T, body io.ReadCloser) (io.ReadCloser, *CallSink) {
+	t.Helper()
+	ctx, sink := WithCalls(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://x/v1/chat/completions", strings.NewReader(`{"model":"m"}`))
+	resp, err := capture(req, func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.Body, sink
+}
+
+// readToDone reads like an SSE client: until it has seen "data: [DONE]".
+func readToDone(t *testing.T, r io.Reader) {
+	t.Helper()
+	var got []byte
+	buf := make([]byte, 7)
+	for !strings.Contains(string(got), "data: [DONE]") {
+		n, err := r.Read(buf)
+		got = append(got, buf[:n]...)
+		if err != nil {
+			t.Fatalf("read: %v (got %q)", err, got)
+		}
+	}
+}
+
+// The "Not signed" bug: a client that stops at [DONE] and closes without
+// reading to EOF must still get a complete call hashed over the whole body.
+func TestCaptureCloseAfterDoneDrains(t *testing.T) {
+	body, sink := wrapped(t, io.NopCloser(iotest.OneByteReader(strings.NewReader(testStream))))
+	readToDone(t, body)
+	body.Close()
+	c := sink.Calls()[0]
+	if !c.Complete || c.CompletionID != "chatcmpl-42" {
+		t.Fatalf("call %+v", c)
+	}
+	if c.ResponseSHA256 != hexSHA([]byte(testStream)) {
+		t.Fatal("response hash isn't over the full body")
+	}
+}
+
+// A body that stalls after [DONE] isn't complete, and Close doesn't hang.
+func TestCaptureCloseStalledStream(t *testing.T) {
+	defer func(d time.Duration) { drainTimeout = d }(drainTimeout)
+	drainTimeout = 50 * time.Millisecond
+	pr, pw := io.Pipe()
+	go io.WriteString(pw, testStream) // never closed
+	body, sink := wrapped(t, pr)
+	readToDone(t, body)
+	start := time.Now()
+	body.Close()
+	if time.Since(start) > time.Second {
+		t.Fatal("Close hung on a stalled body")
+	}
+	if sink.Calls()[0].Complete {
+		t.Fatal("a stalled stream counted as complete")
 	}
 }

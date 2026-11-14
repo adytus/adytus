@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Call is one upstream chat completion, as bytes on the wire. A provider
@@ -111,12 +112,55 @@ func (h *hashReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// Streaming clients stop at "data: [DONE]" and close the body without
+// reading the last bytes (the closing blank line, the chunked terminator), so
+// Close drains whatever is left through the hash before it gives up: the
+// signature is over the whole body, and a stream that really did end is
+// complete.
+const maxDrain = 1 << 20
+
+var drainTimeout = 2 * time.Second
+
 func (h *hashReader) Close() error {
 	if !h.done {
 		h.done = true
-		h.finish(false)
+		h.finish(h.drain())
 	}
 	return h.ReadCloser.Close()
+}
+
+// drain reads the rest of the body into the hash and reports whether it hit
+// EOF. A body that keeps going past maxDrain or stalls past drainTimeout
+// wasn't finished; on a stall the body is closed to unblock the read.
+func (h *hashReader) drain() bool {
+	done := make(chan bool, 1)
+	go func() {
+		buf := make([]byte, 32<<10)
+		var total int64
+		for {
+			n, err := h.ReadCloser.Read(buf)
+			h.h.Write(buf[:n])
+			total += int64(n)
+			if errors.Is(err, io.EOF) {
+				done <- true
+				return
+			}
+			if err != nil || total > maxDrain {
+				done <- false
+				return
+			}
+		}
+	}()
+	t := time.NewTimer(drainTimeout)
+	defer t.Stop()
+	select {
+	case ok := <-done:
+		return ok
+	case <-t.C:
+		h.ReadCloser.Close()
+		<-done // the reader is done with the hash before finish reads it
+		return false
+	}
 }
 
 func (h *hashReader) finish(complete bool) {
