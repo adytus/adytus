@@ -6,7 +6,7 @@ The private AI workspace where your data stays sealed. Chats and files are encry
 
 ## Live demo
 
-URL: [adytus.ai](https://adytus.ai) · login: `testuser@test.com` / `testuserpassword` · NEAR contract: [CONTRACT_ACCOUNT] ([NETWORK])
+URL: [adytus.ai](https://adytus.ai) · login: `testuser@test.com` / `testuserpassword` · NEAR contract: [`adytus-pay.testnet`](https://testnet.nearblocks.io/address/adytus-pay.testnet) (testnet)
 
 ## Built at NEAR Hackathon
 
@@ -72,6 +72,8 @@ The API reads its config from the environment. In bash or zsh, load `.env` with 
 ## Backoffice
 
 Admins set the model whitelist (provider, upstream, name, description, prices, limits, default) and the OpenRouter, Ollama and NEAR AI endpoints (picked from a list of known ones, or a custom URL) and keys for the whole server; changes apply to the next message, without a restart. A model can be rebranded with a description and an identity instruction, which goes into its system prompt so it introduces itself as that name rather than its upstream one. Single model mode offers one model to everyone — the picker disappears and older chats move to it on their next message. `LLM_*` and `MODELS_FILE` only seed the database on first start; after that the backoffice owns them. Keys are sealed with `SERVER_KEY` and never sent back, only their last four characters.
+
+Under **Users**, admins can give or take a user's tokens (each change is recorded in the ledger with a note and who made it) and set a user's own daily cap, or none, in place of `DAILY_CAP_MICROS`. That's how a demo or support account gets credit without a payment.
 
 NEAR payments are set entirely in the backoffice (**Payments → NEAR**): network, RPC, deposit contract, USDC token, price feed and limits. Deploy `contracts/near-deposit` first (see its README), run **Test these settings**, then switch them on. Base payments still come from the `BASE_*` environment variables.
 
