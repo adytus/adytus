@@ -36,6 +36,9 @@ type Deps struct {
 	// Signatures fetches signed receipts for a provider's completions;
 	// nil uses NEAR AI's API. Tests swap in a fake.
 	Signatures func(llm.Provider) SignatureSource
+	// Attestations fetches NEAR AI's attestation reports for the public
+	// proof page; nil uses NEAR AI's API. Tests swap in a fake.
+	Attestations func() AttestationSource
 	Sessions   *session.Store
 	Blobs      blob.Store
 	Tools      *tools.Registry
@@ -54,6 +57,8 @@ type Server struct {
 	providerMu      sync.Mutex
 	ollamaCheckedAt time.Time
 	ollamaUp        bool
+	// reports caches attestation reports for the proof page, per model.
+	reports reportCache
 }
 
 // preferredModelID is offered first and is the fallback default when the
@@ -95,6 +100,13 @@ func (s *Server) routes() {
 
 	api := s.App.Group("/api")
 	api.Get("/models", s.listModels)
+	api.Get("/verify/:id", limiter.New(limiter.Config{
+		Max:        verifyPerMinute,
+		Expiration: time.Minute,
+		LimitReached: func(c fiber.Ctx) error {
+			return errs.RateLimited.New("too many checks; wait a minute")
+		},
+	}), s.verifyMessage)
 
 	auth := api.Group("/auth", limiter.New(limiter.Config{
 		Max:        s.Config.AuthPerMinute,
