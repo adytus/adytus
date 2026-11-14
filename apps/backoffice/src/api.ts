@@ -128,6 +128,8 @@ export type VoucherList = { enabled: boolean; vouchers: Voucher[] };
 // NEAR payments, all set here; the server environment has no NEAR settings.
 export type NearSettings = {
 	enabled: boolean;
+	// Login with NEAR, on the same network. Needs no contract.
+	login_enabled: boolean;
 	network: 'mainnet' | 'testnet';
 	rpc_url: string;
 	contract: string;

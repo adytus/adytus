@@ -56,7 +56,9 @@ type Near struct {
 
 // NearSettings is the near_settings row.
 type NearSettings struct {
-	Enabled         bool      `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// LoginEnabled offers Login with NEAR, on Network. It needs no contract.
+	LoginEnabled    bool      `json:"login_enabled"`
 	Network         string    `json:"network"`
 	RPCURL          string    `json:"rpc_url"`
 	Contract        string    `json:"contract"`
@@ -131,10 +133,10 @@ func (n *Near) price(s NearSettings) near.Pricer {
 func (n *Near) Settings(ctx context.Context) (NearSettings, error) {
 	var s NearSettings
 	err := n.DB.QueryRow(ctx, `
-		SELECT enabled, network, rpc_url, contract, usdc, price_url, price_feed, max_price_age_secs,
+		SELECT enabled, login_enabled, network, rpc_url, contract, usdc, price_url, price_feed, max_price_age_secs,
 			quote_ttl_secs, min_micros, dust_micros, tolerance_bps, poll_secs, updated_at
 		FROM near_settings`).
-		Scan(&s.Enabled, &s.Network, &s.RPCURL, &s.Contract, &s.USDC, &s.PriceURL, &s.PriceFeed, &s.MaxPriceAgeSecs,
+		Scan(&s.Enabled, &s.LoginEnabled, &s.Network, &s.RPCURL, &s.Contract, &s.USDC, &s.PriceURL, &s.PriceFeed, &s.MaxPriceAgeSecs,
 			&s.QuoteTTLSecs, &s.MinMicros, &s.DustMicros, &s.ToleranceBps, &s.PollSecs, &s.UpdatedAt)
 	return s, err
 }
@@ -217,9 +219,10 @@ func (n *Near) SaveSettings(ctx context.Context, s NearSettings, by uuid.UUID) (
 	_, err := n.DB.Exec(ctx, `
 		UPDATE near_settings SET enabled = $1, network = $2, rpc_url = $3, contract = $4, usdc = $5,
 			price_url = $6, price_feed = $7, max_price_age_secs = $8, quote_ttl_secs = $9, min_micros = $10,
-			dust_micros = $11, tolerance_bps = $12, poll_secs = $13, updated_by = $14, updated_at = now()`,
+			dust_micros = $11, tolerance_bps = $12, poll_secs = $13, updated_by = $14, login_enabled = $15,
+			updated_at = now()`,
 		s.Enabled, s.Network, s.RPCURL, s.Contract, s.USDC, s.PriceURL, s.PriceFeed, s.MaxPriceAgeSecs,
-		s.QuoteTTLSecs, s.MinMicros, s.DustMicros, s.ToleranceBps, s.PollSecs, by)
+		s.QuoteTTLSecs, s.MinMicros, s.DustMicros, s.ToleranceBps, s.PollSecs, by, s.LoginEnabled)
 	if err != nil {
 		return s, err
 	}

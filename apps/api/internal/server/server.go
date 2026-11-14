@@ -106,6 +106,7 @@ func (s *Server) routes() {
 	auth.Post("/signup", s.signup)
 	auth.Post("/login", s.login)
 	auth.Post("/recover", s.recover)
+	auth.Get("/near", s.nearLoginStatus)
 	auth.Get("/near/challenge", s.nearChallenge)
 	auth.Post("/near", s.nearLogin)
 	auth.Post("/logout", s.logout)

@@ -221,6 +221,7 @@ export const api = {
 		call<{ user: User; recovery_code: string }>('POST', '/api/auth/signup', { email, password }),
 	login: (email: string, password: string) =>
 		call<{ user: User }>('POST', '/api/auth/login', { email, password }),
+	nearLoginStatus: () => get<{ enabled: boolean; network: 'mainnet' | 'testnet' }>('/api/auth/near'),
 	nearChallenge: () => get<NearChallenge>('/api/auth/near/challenge'),
 	// create makes the account; without it a 404 means there's none yet.
 	nearLogin: (signed: NearSigned, nonce: string, passphrase: string, create: boolean) =>

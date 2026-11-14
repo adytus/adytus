@@ -111,6 +111,19 @@
 		if (error) form.enabled = !on;
 	}
 
+	async function toggleLogin() {
+		if (!form || !data) return;
+		if (dirty) {
+			error = 'Save or undo your changes first.';
+			return;
+		}
+		const on = !data.settings.login_enabled;
+		if (!on && !confirm('Switch Login with NEAR off? The button disappears from the login page. Accounts made with it can still recover with their recovery code.')) return;
+		form.login_enabled = on;
+		await save();
+		if (error) form.login_enabled = !on;
+	}
+
 	function pickNetwork(n: NearSettings['network']) {
 		if (!form || form.network === n) return;
 		const wasKnownRPC = nearRPCs[form.network].some((e) => e.url === form!.rpc_url);
@@ -191,6 +204,27 @@
 				onclick={toggle}
 			>
 				{data.settings.enabled ? 'Switch off' : 'Switch on'}
+			</button>
+		</div>
+
+		<div class="status" class:on={data.settings.login_enabled}>
+			<div>
+				<strong>Login with NEAR: {data.settings.login_enabled ? 'On' : 'Off'}</strong>
+				<span>
+					{data.settings.login_enabled
+						? `The login page offers it, for ${data.settings.network} accounts (the network set below).`
+						: 'The login page shows email sign-in only.'}
+				</span>
+			</div>
+			<button
+				class="btn"
+				class:primary={!data.settings.login_enabled}
+				class:danger={data.settings.login_enabled}
+				type="button"
+				disabled={saving}
+				onclick={toggleLogin}
+			>
+				{data.settings.login_enabled ? 'Switch off' : 'Switch on'}
 			</button>
 		</div>
 

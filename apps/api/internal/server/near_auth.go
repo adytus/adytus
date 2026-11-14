@@ -95,11 +95,25 @@ func (s *Server) checkNearNonce(b []byte) bool {
 	return age >= -time.Minute && age <= nearNonceTTL
 }
 
+var errNearLoginOff = errs.NotFound.New("Login with NEAR is switched off")
+
+// nearLoginStatus tells the login page whether to offer Login with NEAR.
+func (s *Server) nearLoginStatus(c fiber.Ctx) error {
+	settings, err := s.Near.Settings(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"enabled": settings.LoginEnabled, "network": settings.Network})
+}
+
 // nearChallenge hands out what the wallet should sign.
 func (s *Server) nearChallenge(c fiber.Ctx) error {
 	settings, err := s.Near.Settings(c.Context())
 	if err != nil {
 		return err
+	}
+	if !settings.LoginEnabled {
+		return errNearLoginOff
 	}
 	nonce, err := s.newNearNonce()
 	if err != nil {
@@ -126,6 +140,13 @@ func (s *Server) nearLogin(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return err
 	}
+	settings, err := s.Near.Settings(c.Context())
+	if err != nil {
+		return err
+	}
+	if !settings.LoginEnabled {
+		return errNearLoginOff
+	}
 	account := strings.ToLower(strings.TrimSpace(req.AccountID))
 	if !near.ValidAccountID(account) {
 		return errs.Validation.New("that isn't a NEAR account")
@@ -141,10 +162,6 @@ func (s *Server) nearLogin(c fiber.Ctx) error {
 		}
 	}
 
-	settings, err := s.Near.Settings(c.Context())
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
 	full, err := s.Near.Client(settings).IsFullAccessKey(ctx, account, req.PublicKey)
 	cancel()

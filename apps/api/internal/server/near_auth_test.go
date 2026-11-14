@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -125,4 +126,22 @@ func TestLoginWithNEAR(t *testing.T) {
 		"email": "alice.testnet", "recovery_code": out["recovery_code"], "new_password": "another long passphrase",
 	})
 	login(200, alice, "alice.testnet", "another long passphrase", false)
+
+	// Switched off in the backoffice, it's gone: no button, no challenge.
+	if st := e.must(200, "GET", "/api/auth/near", nil); st["enabled"] != true {
+		t.Fatalf("status %v", st)
+	}
+	settings, err := e.srv.Near.Settings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.LoginEnabled = false
+	if _, err := e.srv.Near.SaveSettings(context.Background(), settings, e.userID(t)); err != nil {
+		t.Fatal(err)
+	}
+	if st := e.must(200, "GET", "/api/auth/near", nil); st["enabled"] != false {
+		t.Fatalf("status after switching off %v", st)
+	}
+	e.must(404, "GET", "/api/auth/near/challenge", nil)
+	e.must(404, "POST", "/api/auth/near", body)
 }

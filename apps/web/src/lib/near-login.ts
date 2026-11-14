@@ -14,7 +14,18 @@ async function load(network: 'mainnet' | 'testnet'): Promise<Selector> {
 	if (selector && selectorNetwork === network) return selector;
 	selectorNetwork = network;
 	selector = (async () => {
-		// The wallet packages expect Node's Buffer as a global.
+		// The wallet packages are written for Node too, and some of their
+		// dependencies read Node's `global` and `process` as they load, so
+		// those must exist before any of it is imported.
+		const g = globalThis as { global?: unknown; process?: unknown; Buffer?: unknown };
+		g.global ??= globalThis;
+		g.process ??= {
+			env: {},
+			browser: true,
+			version: '',
+			versions: {},
+			nextTick: (fn: (...a: unknown[]) => void, ...args: unknown[]) => queueMicrotask(() => fn(...args))
+		};
 		const { Buffer } = await import('buffer');
 		(globalThis as { Buffer?: unknown }).Buffer ??= Buffer;
 		const [{ setupWalletSelector }, { setupMeteorWallet }, { setupMyNearWallet }] = await Promise.all([
@@ -36,15 +47,11 @@ export async function nearWallets(network: 'mainnet' | 'testnet'): Promise<NearW
 		.map((m) => ({ id: m.id, name: m.metadata.name, icon: m.metadata.iconUrl }));
 }
 
-// signChallenge asks the wallet to sign the challenge. Extension wallets sign
-// as their connected account, so they're connected first; MyNearWallet asks
-// in its own popup.
+// signChallenge asks the wallet to sign the challenge. No wallet needs to be
+// connected first: each asks which account to sign with.
 export async function signChallenge(walletID: string, ch: NearChallenge): Promise<NearSigned> {
 	const s = await load(ch.network);
 	const wallet = await s.wallet(walletID);
-	if (wallet.id !== 'my-near-wallet' && (await wallet.getAccounts()).length === 0) {
-		await (wallet as unknown as { signIn(p: object): Promise<unknown> }).signIn({});
-	}
 	const { Buffer } = await import('buffer');
 	const signed = await wallet.signMessage({
 		message: ch.message,

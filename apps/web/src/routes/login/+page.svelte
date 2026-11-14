@@ -58,6 +58,19 @@
 	let nearSigned = $state<NearSigned | null>(null);
 	let wallets = $state<NearWalletOption[]>([]);
 	let passphrase = $state('');
+	// Shown only when the backoffice has it on.
+	let nearLoginOn = $state(false);
+	let nearNetwork = $state<'mainnet' | 'testnet'>('mainnet');
+
+	$effect(() => {
+		api.nearLoginStatus().then(
+			(s) => {
+				nearLoginOn = s.enabled;
+				nearNetwork = s.network;
+			},
+			() => (nearLoginOn = false)
+		);
+	});
 
 	async function startNear() {
 		error = '';
@@ -67,7 +80,13 @@
 			wallets = await nearWallets(nearChallenge.network);
 			near = 'pick';
 		} catch (err) {
-			error = err instanceof ApiError ? err.message : 'Couldn’t start Login with NEAR. Try again.';
+			// Show what actually went wrong: a wallet library that fails to load
+			// says so here rather than behind a generic message.
+			console.error('Login with NEAR', err);
+			error =
+				err instanceof ApiError
+					? err.message
+					: `Couldn’t start Login with NEAR: ${err instanceof Error ? err.message : String(err)}`;
 		} finally {
 			busy = false;
 		}
@@ -242,9 +261,11 @@
 						<button type="button" class="link" onclick={() => switchTo('login')}>Back to sign in</button>
 					{/if}
 				</div>
-				{#if mode !== 'recover'}
+				{#if mode !== 'recover' && nearLoginOn}
 					<div class="or"><span>or</span></div>
-					<button type="button" class="btn near" disabled={busy} onclick={startNear}>Login with NEAR</button>
+					<button type="button" class="btn near" disabled={busy} onclick={startNear}>
+						Login with NEAR{nearNetwork === 'testnet' ? ' (testnet)' : ''}
+					</button>
 				{/if}
 			</div>
 		</form>
