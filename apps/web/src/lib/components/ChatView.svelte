@@ -498,7 +498,15 @@
 						{#if m.attachments?.length}
 							<p class="sealed">
 								{@render lock()}
-								Encrypted and stored safely in Adytus. Only you can read {m.attachments.length === 1 ? 'it' : 'them'}.
+								<span>
+									Encrypted and stored safely in Adytus. Only you can read {m.attachments.length === 1 ? 'it' : 'them'}.
+									{#if app.model(messages[i + 1]?.model ?? modelID)?.private_inference}
+										This model runs on <a href="https://near.ai/" target="_blank" rel="noopener noreferrer">NEAR AI</a>'s
+										sealed enclaves, built on <a href="https://near.org/" target="_blank" rel="noopener noreferrer"
+											>NEAR Protocol</a
+										>.
+									{/if}
+								</span>
 							</p>
 						{/if}
 					</article>
@@ -954,6 +962,11 @@
 	}
 	.sealed svg {
 		flex: none;
+	}
+	.sealed a {
+		color: inherit;
+		text-decoration: underline;
+		text-underline-offset: 2px;
 	}
 	/* On a sent message the note sits on the bubble, so it takes the
 	   bubble's own ink instead of the page's muted grey. */
